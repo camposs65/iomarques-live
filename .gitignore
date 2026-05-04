@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+# Build / packaging
+build/
+dist/
+*.spec
+
+# Installer and app runtime data
+live_atual.json
+historico_lives.json
+*.tmp
+
+# Local exports and reports
+*.xlsx
+*.xls
+*.csv
+*.txt
+!README.md
+!requirements.txt
+!assets/LEIA-ME-LOGO.txt
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Keep generated brand assets out of source control, but allow the placeholder instructions.
+assets/*.png
+assets/*.jpg
+assets/*.jpeg
+assets/*.webp
+assets/*.ico
+!assets/logo_original.png
+!assets/logo_original.jpg
+!assets/logo_original.jpeg
+!assets/logo_original.webp
+!assets/LEIA-ME-LOGO.txt

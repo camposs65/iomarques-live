@@ -1,0 +1,14 @@
+Para usar exatamente a logo da IoMarques no aplicativo:
+
+1. Salve a imagem original nesta pasta com o nome:
+   logo_original.png
+
+2. Rode:
+   python gerar_assets_logo.py
+
+O script cria automaticamente:
+- logo_round.png: usada no cabeçalho do app
+- app_icon.ico: usada no executável do Windows
+- install_splash.png: usada na tela de instalação
+
+Observação: não use uma imagem redesenhada. Use o arquivo original da marca.
