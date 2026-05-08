@@ -17,6 +17,9 @@ dist/
 # Installer and app runtime data
 live_atual.json
 historico_lives.json
+backups/
+*.bak.json
+live_atual_*.json
 *.tmp
 
 # Local exports and reports

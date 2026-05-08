@@ -160,14 +160,16 @@ class Installer(tk.Tk):
     def create_shortcut(self):
         if not sys.platform.startswith("win"):
             return
-        desktop = Path.home() / "Desktop"
-        shortcut_path = desktop / "IoMarques Brecho.lnk"
+        target_path = str(EXE_PATH).replace("'", "''")
+        working_directory = str(EXE_PATH.parent).replace("'", "''")
 
         script = (
+            "$desktop = [Environment]::GetFolderPath('Desktop')\n"
+            "$shortcutPath = Join-Path $desktop 'IoMarques Brecho.lnk'\n"
             "$shell = New-Object -ComObject WScript.Shell\n"
-            f"$shortcut = $shell.CreateShortcut('{shortcut_path}')\n"
-            f"$shortcut.TargetPath = '{EXE_PATH}'\n"
-            f"$shortcut.WorkingDirectory = '{EXE_PATH.parent}'\n"
+            "$shortcut = $shell.CreateShortcut($shortcutPath)\n"
+            f"$shortcut.TargetPath = '{target_path}'\n"
+            f"$shortcut.WorkingDirectory = '{working_directory}'\n"
             "$shortcut.Description = 'Controle de vendas da live - IoMarques Brecho'\n"
             "$shortcut.Save()\n"
         )

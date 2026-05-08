@@ -59,6 +59,9 @@ Os dados ficam salvos junto do executável:
 
 - `live_atual.json`: live em andamento.
 - `historico_lives.json`: histórico das lives finalizadas.
+- `backups\live_atual.bak.json`: cópia de recuperação da live atual.
+- `backups\historico_lives.bak.json`: cópia de recuperação do histórico.
+- `backups\live_atual_*.json`: snapshots recentes da live atual, mantidos automaticamente.
 
 Esses arquivos não devem ir para Git/GitHub; eles são dados reais de operação da loja.
 
@@ -68,33 +71,43 @@ Esses arquivos não devem ir para Git/GitHub; eles são dados reais de operaçã
 - O contador fica rodando no canto superior direito.
 - Ao preencher `Valor` ou `Código`, o app salva automaticamente o `Tempo` daquela peça.
 - Clique em `Finalizar live` quando a live terminar.
+- O app pede confirmação antes de finalizar a live.
 - Ao finalizar, a live entra no histórico automaticamente.
+- A live é salva a cada edição e também a cada 10 segundos enquanto o app estiver aberto.
 - Clique em uma célula para editar.
 - Quando o campo `Cliente` estiver preenchido, a linha fica levemente verde.
 - Digitar na última linha vazia cria outra linha automaticamente.
 - Os dados ficam salvos automaticamente no arquivo `live_atual.json`.
 - Ao digitar `39,90` no valor, o app transforma em `R$ 39,90`.
+- Ao apagar `Valor` e `Código`, o campo `Tempo` fica vazio novamente.
 - Use as setas do teclado para navegar entre as células.
-- Passe o mouse sobre `Cliente`, `Suplente 1` ou `Suplente 2` para mostrar o `X` de remoção.
+- Use `Ctrl+Z` para desfazer, `Ctrl+Y` para refazer e `Ctrl+F` para abrir a pesquisa.
+- Use a setinha no cabeçalho de cada coluna para filtrar, como no Excel.
+- Passe o mouse sobre `Cliente` ou `Suplente` para mostrar o `X` de remoção.
+- Durante a live, o cabeçalho grande da marca fica escondido para dar mais espaço à planilha.
 
 Exemplo da IoMarques Brechó:
 
-| Valor | Código | Tempo | Cliente | Suplente 1 | Suplente 2 |
+| Peça | Valor | Código | Cliente | Suplente | Tempo |
 | --- | --- | --- | --- | --- | --- |
-| R$ 39,90 | 345 | 00:12:08 | chimabyliz | anapaula | |
+| 1 | R$ 39,90 | 345 | chimabyliz | anapaula | 00:12:08 |
 
 ## Botões
 
-- Antes de começar: aparecem `Iniciar live`, `Resumo final`, `Exportar Excel`, `Imprimir resumo`, `Histórico de lives` e `Nova live / Limpar tudo`.
+- Antes de começar: aparecem `Iniciar live`, `Resumo final`, `Mensagens clientes`, `Exportar Excel`, `Imprimir resumo`, `Imprimir planilha`, `Imprimir não vendidas`, `Histórico de lives` e `Nova live / Limpar tudo`.
 - Durante a live: aparece apenas `Finalizar live`.
-- Depois de finalizar: aparecem `Resumo final`, `Exportar Excel`, `Imprimir resumo`, `Histórico de lives` e `Nova live / Limpar tudo`.
+- Depois de finalizar: aparecem `Resumo final`, `Mensagens clientes`, `Exportar Excel`, `Imprimir resumo`, `Imprimir planilha`, `Imprimir não vendidas`, `Histórico de lives` e `Nova live / Limpar tudo`.
 
 Depois de finalizar:
 
-- `Histórico de lives`: mostra as lives finalizadas, duração, peças, clientes e total.
-- `Resumo final`: mostra cada cliente, as peças, o tempo de aparição e o total a pagar.
-- `Exportar Excel`: cria um `.xlsx` com as abas `Vendas`, `Resumo por cliente`, `Dados da live` e `Histórico de lives`.
-- `Imprimir resumo`: envia o relatório da live para a impressora padrão.
+- `Histórico de lives`: mostra as lives finalizadas, duração, peças, clientes e total. Selecione uma live e clique em `Excluir live selecionada` para remover apenas o registro do histórico.
+- `Histórico de lives`: use `Abrir na planilha principal` ou dê dois cliques para carregar a planilha daquela live na tela principal quando ela tiver dados detalhados salvos. O app bloqueia essa abertura se houver uma live em andamento ou dados já preenchidos na planilha principal.
+- `Resumo final`: mostra cada cliente em destaque, os códigos das peças, tempos, suplentes, checkbox por peça e total da cliente. No final, mostra clientes, peças vendidas e total vendido.
+- `Mensagens clientes`: cria textos prontos para copiar e enviar às clientes.
+- `Exportar Excel`: cria um `.xlsx` com índice das peças, filtros nas colunas e as abas `Vendas`, `Resumo por cliente`, `Suplentes`, `Dados da live` e `Histórico de lives`.
+- `Imprimir resumo`: envia um resumo por cliente com checkbox, nome da cliente em negrito, suplente na mesma linha da peça e totais finais. Quando não couber em uma folha, continua em páginas seguintes com fonte legível.
+- `Imprimir planilha`: imprime a planilha em A4, retrato, ajustada para caber em uma página.
+- `Imprimir não vendidas`: imprime apenas as peças preenchidas que ainda não têm cliente, também com checkbox.
 - `Nova live / Limpar tudo`: apaga os dados e zera o contador para começar outra live.
 
 ## Logo e carregamento
@@ -111,6 +124,5 @@ Os arquivos de marca ficam na pasta `assets`.
 
 O `X` aparece somente quando o mouse está em cima de uma célula de cliente ou suplente preenchida.
 
-- `X` em `Cliente`: remove a titular, promove `Suplente 1` para `Cliente` e promove `Suplente 2` para `Suplente 1`.
-- `X` em `Suplente 1`: remove a suplente 1 e promove `Suplente 2`.
-- `X` em `Suplente 2`: limpa apenas a suplente 2.
+- `X` em `Cliente`: remove a titular, promove `Suplente` para `Cliente` e limpa `Suplente`.
+- `X` em `Suplente`: limpa apenas a suplente.
