@@ -357,30 +357,51 @@ class LiveSalesApp(tk.Tk):
         footer.pack(fill="x", padx=24, pady=(0, 14))
 
     def _build_final_action_buttons(self, parent):
-        ttk.Button(parent, text="Resumo final", command=self.show_summary, style="Primary.TButton").pack(
-            side="left", padx=(0, 8)
-        )
-        ttk.Button(parent, text="Mensagens clientes", command=self.show_client_messages, style="Primary.TButton").pack(
-            side="left", padx=(0, 8)
-        )
-        ttk.Button(parent, text="Exportar Excel", command=self.export_excel, style="Primary.TButton").pack(
-            side="left", padx=(0, 8)
-        )
-        ttk.Button(parent, text="Imprimir resumo", command=self.print_report, style="Secondary.TButton").pack(
-            side="left", padx=(0, 8)
-        )
-        ttk.Button(parent, text="Imprimir planilha", command=self.print_sheet, style="Secondary.TButton").pack(
-            side="left", padx=(0, 8)
-        )
-        ttk.Button(parent, text="Imprimir não vendidas", command=self.print_unsold_pieces, style="Secondary.TButton").pack(
-            side="left", padx=(0, 8)
-        )
-        ttk.Button(parent, text="Histórico de lives", command=self.show_history, style="Secondary.TButton").pack(
-            side="left", padx=(0, 8)
-        )
+        self._build_actions_menu(parent).pack(side="left", padx=(0, 8))
         ttk.Button(parent, text="Nova live / Limpar tudo", command=self.clear_all, style="Secondary.TButton").pack(
             side="left"
         )
+
+    def _build_actions_menu(self, parent):
+        container = tk.Frame(parent, bg=COLORS["app_bg"])
+        button = tk.Menubutton(
+            container,
+            text="Ações da live ▾",
+            bg=COLORS["primary"],
+            fg="#FFFFFF",
+            activebackground="#6C366B",
+            activeforeground="#FFFFFF",
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=8,
+            font=("Segoe UI Semibold", 10),
+            cursor="hand2",
+        )
+        button.pack(side="left")
+
+        menu = tk.Menu(
+            button,
+            tearoff=False,
+            bg="#FFFFFF",
+            fg=COLORS["text"],
+            activebackground=COLORS["secondary"],
+            activeforeground=COLORS["button_text"],
+            font=("Segoe UI", 10),
+            bd=0,
+            relief="flat",
+        )
+        menu.add_command(label="Resumo final", command=self.show_summary)
+        menu.add_command(label="Exportar Excel", command=self.export_excel)
+        menu.add_separator()
+        menu.add_command(label="Imprimir todos", command=self.print_all_reports)
+        menu.add_command(label="Imprimir resumo", command=self.print_report)
+        menu.add_command(label="Imprimir planilha", command=self.print_sheet)
+        menu.add_command(label="Imprimir não vendidas", command=self.print_unsold_pieces)
+        menu.add_separator()
+        menu.add_command(label="Histórico de lives", command=self.show_history)
+        button.configure(menu=menu)
+        return container
 
     def _build_table_header(self):
         self.filter_buttons = []
@@ -2106,15 +2127,16 @@ class LiveSalesApp(tk.Tk):
         for row in range(2, sheets[2].max_row + 1):
             sheets[2].cell(row=row, column=5).number_format = '"R$" #,##0.00'
 
-    def print_sheet(self):
+    def print_sheet(self, show_success=True, show_empty=True):
         self._finish_active_cell()
         rows = self._rows()
         if not rows:
-            messagebox.showinfo("Nada para imprimir", "Preencha pelo menos uma linha antes de imprimir.")
-            return
-        self._print_rows_as_workbook(rows, "Planilha da live", "iomarques_planilha")
+            if show_empty:
+                messagebox.showinfo("Nada para imprimir", "Preencha pelo menos uma linha antes de imprimir.")
+            return False
+        return self._print_rows_as_workbook(rows, "Planilha da live", "iomarques_planilha", show_success=show_success)
 
-    def print_unsold_pieces(self):
+    def print_unsold_pieces(self, show_success=True, show_empty=True):
         self._finish_active_cell()
         rows = [
             row
@@ -2122,11 +2144,12 @@ class LiveSalesApp(tk.Tk):
             if not row["cliente"].strip() and (row["valor"].strip() or row["codigo"].strip())
         ]
         if not rows:
-            messagebox.showinfo("Sem peças não vendidas", "Não encontrei peças preenchidas sem cliente.")
-            return
-        self._print_rows_as_workbook(rows, "Peças não vendidas", "iomarques_nao_vendidas")
+            if show_empty:
+                messagebox.showinfo("Sem peças não vendidas", "Não encontrei peças preenchidas sem cliente.")
+            return False
+        return self._print_rows_as_workbook(rows, "Peças não vendidas", "iomarques_nao_vendidas", show_success=show_success)
 
-    def _print_rows_as_workbook(self, rows, title, filename_prefix):
+    def _print_rows_as_workbook(self, rows, title, filename_prefix, show_success=True):
         printable_text = self._printable_rows_text(rows, title)
         try:
             self._send_text_to_printer(printable_text, title)
@@ -2141,9 +2164,11 @@ class LiveSalesApp(tk.Tk):
                 "Não consegui imprimir",
                 f"{saved_message}Erro ao enviar para a impressora:\n{exc}",
             )
-            return
+            return False
 
-        messagebox.showinfo("Impressão enviada", "Enviei a planilha para a impressora padrão.")
+        if show_success:
+            messagebox.showinfo("Impressão enviada", "Enviei a planilha para a impressora padrão.")
+        return True
 
     def _printable_rows_text(self, rows, title):
         now = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -2485,7 +2510,7 @@ class LiveSalesApp(tk.Tk):
         else:
             subprocess.run(["lp", str(path)], check=True)
 
-    def print_report(self):
+    def print_report(self, show_success=True):
         self._finish_active_cell()
 
         report_lines = self._printable_report_lines()
@@ -2507,9 +2532,35 @@ class LiveSalesApp(tk.Tk):
                 "Não consegui imprimir",
                 f"{saved_message}Erro ao enviar para a impressora:\n{exc}",
             )
-            return
+            return False
 
-        messagebox.showinfo("Impressão enviada", "Enviei o resumo para a impressora padrão.")
+        if show_success:
+            messagebox.showinfo("Impressão enviada", "Enviei o resumo para a impressora padrão.")
+        return True
+
+    def print_all_reports(self):
+        self._finish_active_cell()
+
+        sent = []
+        skipped = []
+        if self.print_report(show_success=False):
+            sent.append("resumo")
+        if self.print_sheet(show_success=False, show_empty=False):
+            sent.append("planilha")
+        else:
+            skipped.append("planilha sem dados")
+        if self.print_unsold_pieces(show_success=False, show_empty=False):
+            sent.append("peças não vendidas")
+        else:
+            skipped.append("sem peças não vendidas")
+
+        if sent:
+            detail = f"Enviei para a impressora: {', '.join(sent)}."
+            if skipped:
+                detail += f"\n\nItens ignorados: {', '.join(skipped)}."
+            messagebox.showinfo("Impressão enviada", detail)
+        else:
+            messagebox.showinfo("Nada para imprimir", "Não encontrei dados para enviar para a impressora.")
 
     def clear_all(self):
         self._finish_active_cell()
