@@ -100,10 +100,11 @@ Exemplo da IoMarques Brechó:
 
 Depois de finalizar:
 
-- `Ações da live`: abre um menu limpo com `Resumo final`, `Exportar Excel`, `Imprimir todos`, `Imprimir resumo`, `Imprimir planilha`, `Imprimir não vendidas` e `Histórico de lives`.
+- `Ações da live`: abre um menu limpo com `Resumo final`, `Mensagens clientes`, `Exportar Excel`, `Imprimir todos`, `Imprimir resumo`, `Imprimir planilha`, `Imprimir não vendidas` e `Histórico de lives`.
 - `Histórico de lives`: mostra as lives finalizadas, duração, peças, clientes e total. Selecione uma live e clique em `Excluir live selecionada` para remover apenas o registro do histórico.
 - `Histórico de lives`: use `Abrir na planilha principal` ou dê dois cliques para carregar a planilha daquela live na tela principal quando ela tiver dados detalhados salvos. O app bloqueia essa abertura se houver uma live em andamento ou dados já preenchidos na planilha principal.
 - `Resumo final`: mostra cada cliente em destaque, os códigos das peças, tempos, suplentes, checkbox por peça e total da cliente. No final, mostra clientes, peças vendidas e total vendido.
+- `Mensagens clientes`: cria mensagens prontas para enviar às clientes com peças arrematadas, total e instruções de pagamento.
 - `Exportar Excel`: cria um `.xlsx` com índice das peças, filtros nas colunas e as abas `Vendas`, `Resumo por cliente`, `Suplentes`, `Dados da live` e `Histórico de lives`.
 - `Imprimir todos`: envia o resumo, a planilha e as peças não vendidas para a impressora padrão, ignorando automaticamente os itens que não tiverem dados.
 - `Imprimir resumo`: envia um resumo por cliente com checkbox, nome da cliente em negrito, suplente na mesma linha da peça e totais finais. Quando não couber em uma folha, continua em páginas seguintes com fonte legível.

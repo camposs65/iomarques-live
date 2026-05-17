@@ -392,6 +392,7 @@ class LiveSalesApp(tk.Tk):
             relief="flat",
         )
         menu.add_command(label="Resumo final", command=self.show_summary)
+        menu.add_command(label="Mensagens clientes", command=self.show_client_messages)
         menu.add_command(label="Exportar Excel", command=self.export_excel)
         menu.add_separator()
         menu.add_command(label="Imprimir todos", command=self.print_all_reports)
@@ -1811,12 +1812,29 @@ class LiveSalesApp(tk.Tk):
         messages = []
         for cliente, items in summary.items():
             subtotal = sum((item["valor"] for item in items), Decimal("0"))
-            lines = [f"Oi, {cliente}! Suas peças da live:"]
+            piece_lines = []
             for item in items:
                 codigo = item["codigo"] or "sem código"
                 tempo = f" - {item['tempo']}" if item["tempo"] else ""
-                lines.append(f"- Peça {codigo}{tempo}: {self._format_money(item['valor'])}")
-            lines.append(f"Total: {self._format_money(subtotal)}")
+                piece_lines.append(f"- Peça {codigo}{tempo}: {self._format_money(item['valor'])}")
+            lines = [
+                f"Cliente: {cliente}",
+                "",
+                "Oi amada!😃",
+                "Você arrematou na LIVE ",
+                "as seguintes peças:",
+                *piece_lines,
+                f"e ficou o total de {self._format_money(subtotal)}.",
+                "",
+                "👉 Você pode optar por fazer Pix",
+                "👉 Ou link de pagamento para pagar no cartão de crédito.",
+                "",
+                "Espero seu retorno com brevidade.",
+                "Pois temos muitas vezes fila nas peças.",
+                "",
+                "Aaaa não esqueça de mandar o comprovante.",
+                " Combinado?😉",
+            ]
             messages.append("\n".join(lines))
         return "\n\n---\n\n".join(messages) + "\n"
 
