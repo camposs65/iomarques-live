@@ -31,7 +31,7 @@ HEADERS = {
     "tempo": "Tempo",
 }
 COLUMN_WIDTHS = (130, 110, 250, 250, 115)
-INDEX_COLUMN_WIDTH = 58
+INDEX_COLUMN_WIDTH = 68
 
 VALUE_COL = COLUMNS.index("valor")
 CODE_COL = COLUMNS.index("codigo")
@@ -87,6 +87,9 @@ class LiveSalesApp(tk.Tk):
         self.row_vars = []
         self.index_frames = []
         self.index_labels = []
+        self.time_check_vars = []
+        self.time_check_buttons = []
+        self.manual_time_vars = []
         self.cell_frames = []
         self.cell_entries = []
         self.clear_buttons = []
@@ -575,6 +578,7 @@ class LiveSalesApp(tk.Tk):
 
             self._ensure_blank_row()
             for row_index in range(len(self.row_vars)):
+                self._refresh_time_checkbox(row_index)
                 if row_index in changed_rows or row_index >= len(rows):
                     self._refresh_row_style(row_index)
             if active_cell and self._cell_exists(*active_cell):
@@ -594,6 +598,9 @@ class LiveSalesApp(tk.Tk):
             cell.destroy()
         self.index_frames.pop()
         self.index_labels.pop()
+        self.time_check_vars.pop()
+        self.time_check_buttons.pop()
+        self.manual_time_vars.pop()
         self.row_vars.pop()
         self.cell_frames.pop()
         self.cell_entries.pop()
@@ -750,6 +757,24 @@ class LiveSalesApp(tk.Tk):
             highlightthickness=1,
         )
         index_cell.grid(row=row_index, column=0, sticky="nsew")
+        time_check_var = tk.BooleanVar(value=bool(values[TIME_COL].strip() if TIME_COL < len(values) else ""))
+        manual_time_var = tk.BooleanVar(value=False)
+        time_check = tk.Checkbutton(
+            index_cell,
+            variable=time_check_var,
+            command=lambda r=row_index: self._toggle_manual_time(r),
+            bg=COLORS["table_header"],
+            activebackground=COLORS["table_header"],
+            selectcolor="#DDF4E5",
+            relief="flat",
+            bd=0,
+            padx=0,
+            pady=0,
+            width=1,
+            cursor="hand2",
+            takefocus=False,
+        )
+        time_check.pack(side="left", padx=(3, 0), pady=0)
         index_label = tk.Label(
             index_cell,
             text=str(row_index + 1),
@@ -757,10 +782,10 @@ class LiveSalesApp(tk.Tk):
             fg=COLORS["button_text"],
             font=("Segoe UI Semibold", 10),
             anchor="center",
-            padx=6,
+            padx=2,
             pady=7,
         )
-        index_label.pack(fill="both", expand=True)
+        index_label.pack(side="left", fill="both", expand=True)
 
         for col in range(len(COLUMNS)):
             self.body_frame.grid_columnconfigure(col + 1, weight=1, minsize=COLUMN_WIDTHS[col])
@@ -832,6 +857,9 @@ class LiveSalesApp(tk.Tk):
 
         self.index_frames.append(index_cell)
         self.index_labels.append(index_label)
+        self.time_check_vars.append(time_check_var)
+        self.time_check_buttons.append(time_check)
+        self.manual_time_vars.append(manual_time_var)
         self.row_vars.append(row_vars)
         self.cell_frames.append(row_frames)
         self.cell_entries.append(row_entries)
@@ -861,6 +889,7 @@ class LiveSalesApp(tk.Tk):
             self.row_vars[row][col].set(self._format_money_input(self.row_vars[row][col].get()))
         if col in (VALUE_COL, CODE_COL):
             self._maybe_stamp_piece_time(row)
+        self._refresh_time_checkbox(row)
         self._refresh_row_style(row)
         self._refresh_totals()
         self._ensure_blank_row()
@@ -872,6 +901,7 @@ class LiveSalesApp(tk.Tk):
             return
         if col in (VALUE_COL, CODE_COL):
             self._maybe_stamp_piece_time(row)
+        self._refresh_time_checkbox(row)
         self._refresh_row_style(row)
         self._refresh_totals()
         self._ensure_blank_row()
@@ -886,10 +916,44 @@ class LiveSalesApp(tk.Tk):
         has_piece_reference = (
             self.row_vars[row][VALUE_COL].get().strip() or self.row_vars[row][CODE_COL].get().strip()
         )
-        if not has_piece_reference:
+        manual_time = row < len(self.manual_time_vars) and self.manual_time_vars[row].get()
+        if not has_piece_reference and not manual_time:
             self.row_vars[row][TIME_COL].set("")
         elif self.live_running and not self.row_vars[row][TIME_COL].get().strip():
             self.row_vars[row][TIME_COL].set(self._format_elapsed(self._current_elapsed_seconds()))
+        self._refresh_time_checkbox(row)
+
+    def _toggle_manual_time(self, row):
+        if not self._cell_exists(row, TIME_COL) or self.restoring_rows:
+            return
+
+        checked = self.time_check_vars[row].get()
+        current_time = self.row_vars[row][TIME_COL].get().strip()
+        if checked and not current_time:
+            self._record_undo_state()
+            self.manual_time_vars[row].set(True)
+            self.row_vars[row][TIME_COL].set(self._format_elapsed(self._current_elapsed_seconds()))
+        elif not checked and current_time:
+            self._record_undo_state()
+            self.manual_time_vars[row].set(False)
+            self.row_vars[row][TIME_COL].set("")
+        elif not checked:
+            self.manual_time_vars[row].set(False)
+
+        self._refresh_time_checkbox(row)
+        self._refresh_row_style(row)
+        self._refresh_totals()
+        self._ensure_blank_row()
+        self._apply_filters()
+        self._save_rows()
+
+    def _refresh_time_checkbox(self, row):
+        if row < 0 or row >= len(self.time_check_vars) or not self._cell_exists(row, TIME_COL):
+            return
+        has_time = bool(self.row_vars[row][TIME_COL].get().strip())
+        self.time_check_vars[row].set(has_time)
+        if not has_time and row < len(self.manual_time_vars):
+            self.manual_time_vars[row].set(False)
 
     def _move_focus_left(self, row, col):
         target_row = row
@@ -1009,6 +1073,15 @@ class LiveSalesApp(tk.Tk):
             return
 
         bg = self._row_bg(row)
+        if row < len(self.index_frames):
+            self.index_frames[row].configure(bg=COLORS["table_header"])
+        if row < len(self.index_labels):
+            self.index_labels[row].configure(bg=COLORS["table_header"])
+        if row < len(self.time_check_buttons):
+            self.time_check_buttons[row].configure(
+                bg=COLORS["table_header"],
+                activebackground=COLORS["table_header"],
+            )
         for col in range(len(COLUMNS)):
             cell = self.cell_frames[row][col]
             entry = self.cell_entries[row][col]
@@ -1496,6 +1569,9 @@ class LiveSalesApp(tk.Tk):
         self.row_vars.clear()
         self.index_frames.clear()
         self.index_labels.clear()
+        self.time_check_vars.clear()
+        self.time_check_buttons.clear()
+        self.manual_time_vars.clear()
         self.cell_frames.clear()
         self.cell_entries.clear()
         self.clear_buttons.clear()
@@ -1804,38 +1880,46 @@ class LiveSalesApp(tk.Tk):
             lines.append("")
         return "\n".join(lines) + "\n"
 
-    def _client_messages_text(self):
+    def _client_message_text(self, items):
+        subtotal = sum((item["valor"] for item in items), Decimal("0"))
+        piece_lines = []
+        for item in items:
+            codigo = item["codigo"] or "sem código"
+            piece_lines.append(f"- Peça {codigo}: {self._format_money(item['valor'])}")
+        lines = [
+            "Oi amada!😃",
+            "Você arrematou na LIVE ",
+            "as seguintes peças:",
+            *piece_lines,
+            f"e ficou o total de {self._format_money(subtotal)}.",
+            "",
+            "👉 Você pode optar por fazer Pix",
+            "👉 Ou link de pagamento para pagar no cartão de crédito.",
+            "",
+            "Espero seu retorno com brevidade.",
+            "Pois temos muitas vezes fila nas peças.",
+            "",
+            "Aaaa não esqueça de mandar o comprovante.",
+            " Combinado?😉",
+        ]
+        return "\n".join(lines)
+
+    def _client_messages(self):
         summary = self._summary()
         if not summary:
-            return "Nenhuma peça com cliente titular ainda.\n"
+            return []
 
         messages = []
         for cliente, items in summary.items():
-            subtotal = sum((item["valor"] for item in items), Decimal("0"))
-            piece_lines = []
-            for item in items:
-                codigo = item["codigo"] or "sem código"
-                tempo = f" - {item['tempo']}" if item["tempo"] else ""
-                piece_lines.append(f"- Peça {codigo}{tempo}: {self._format_money(item['valor'])}")
-            lines = [
-                f"Cliente: {cliente}",
-                "",
-                "Oi amada!😃",
-                "Você arrematou na LIVE ",
-                "as seguintes peças:",
-                *piece_lines,
-                f"e ficou o total de {self._format_money(subtotal)}.",
-                "",
-                "👉 Você pode optar por fazer Pix",
-                "👉 Ou link de pagamento para pagar no cartão de crédito.",
-                "",
-                "Espero seu retorno com brevidade.",
-                "Pois temos muitas vezes fila nas peças.",
-                "",
-                "Aaaa não esqueça de mandar o comprovante.",
-                " Combinado?😉",
-            ]
-            messages.append("\n".join(lines))
+            messages.append((cliente, self._client_message_text(items)))
+        return messages
+
+    def _client_messages_text(self):
+        messages = []
+        for index, (cliente, message) in enumerate(self._client_messages(), start=1):
+            messages.append(f"[ ] {index} - Cliente: {cliente}\n\n{message}")
+        if not messages:
+            return "Nenhuma peça com cliente titular ainda.\n"
         return "\n\n---\n\n".join(messages) + "\n"
 
     def _clip_text(self, value, width):
@@ -1967,29 +2051,104 @@ class LiveSalesApp(tk.Tk):
             font=("Segoe UI Semibold", 17),
         ).pack(side="left", padx=18, pady=12)
 
-        text = tk.Text(
-            window,
-            wrap="word",
-            bg="#FFFFFF",
-            fg=COLORS["text"],
-            relief="flat",
-            font=("Segoe UI", 11),
-            padx=16,
-            pady=14,
-        )
-        text.pack(fill="both", expand=True, padx=18, pady=(18, 10))
-        text.insert("end", self._client_messages_text())
+        messages = self._client_messages()
+        if not messages:
+            tk.Label(
+                window,
+                text="Nenhuma peça com cliente titular ainda.",
+                bg=COLORS["app_bg"],
+                fg=COLORS["button_text"],
+                font=("Segoe UI", 11),
+            ).pack(fill="both", expand=True, padx=18, pady=18)
+            return
 
-        actions = tk.Frame(window, bg=COLORS["app_bg"])
-        actions.pack(fill="x", padx=18, pady=(0, 18))
+        list_shell = tk.Frame(window, bg="#FFFFFF", highlightbackground=COLORS["grid"], highlightthickness=1)
+        list_shell.pack(fill="both", expand=True, padx=18, pady=18)
 
-        def copy_messages():
-            content = text.get("1.0", "end").strip()
-            self.clipboard_clear()
-            self.clipboard_append(content)
-            messagebox.showinfo("Copiado", "As mensagens foram copiadas.")
+        canvas = tk.Canvas(list_shell, bg="#FFFFFF", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_shell, orient="vertical", command=canvas.yview)
+        list_frame = tk.Frame(canvas, bg="#FFFFFF")
+        list_window = canvas.create_window((0, 0), window=list_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
-        ttk.Button(actions, text="Copiar mensagens", command=copy_messages, style="Primary.TButton").pack(side="right")
+        def configure_scroll(_event=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def configure_width(event):
+            canvas.itemconfigure(list_window, width=event.width)
+
+        list_frame.bind("<Configure>", configure_scroll)
+        canvas.bind("<Configure>", configure_width)
+
+        copied_bg = "#DDF4E5"
+        for index, (cliente, message) in enumerate(messages, start=1):
+            row = tk.Frame(list_frame, bg="#FFFFFF", highlightbackground=COLORS["grid"], highlightthickness=1)
+            row.pack(fill="x", padx=10, pady=(10 if index == 1 else 0, 8))
+            row.grid_columnconfigure(2, weight=1)
+
+            copied_var = tk.BooleanVar(value=False)
+
+            def paint_copied_state(copied_var=copied_var, row=row):
+                bg = copied_bg if copied_var.get() else "#FFFFFF"
+                row.configure(bg=bg)
+                for child in row.winfo_children():
+                    if isinstance(child, tk.Checkbutton):
+                        child.configure(bg=bg, activebackground=bg)
+                    elif isinstance(child, tk.Label):
+                        child.configure(bg=bg)
+                    elif isinstance(child, tk.Entry):
+                        child.configure(readonlybackground=bg)
+
+            check = tk.Checkbutton(
+                row,
+                variable=copied_var,
+                command=paint_copied_state,
+                bg="#FFFFFF",
+                activebackground="#FFFFFF",
+                selectcolor=copied_bg,
+                relief="flat",
+                bd=0,
+                padx=0,
+                pady=0,
+                cursor="hand2",
+                takefocus=False,
+            )
+            check.grid(row=0, column=0, padx=(10, 6), pady=10)
+
+            index_label = tk.Label(
+                row,
+                text=f"{index}.",
+                bg="#FFFFFF",
+                fg=COLORS["text"],
+                font=("Segoe UI Semibold", 11),
+                anchor="w",
+            )
+            index_label.grid(row=0, column=1, sticky="w", padx=(0, 4), pady=10)
+
+            name_var = tk.StringVar(value=cliente)
+            name_entry = tk.Entry(
+                row,
+                textvariable=name_var,
+                state="readonly",
+                readonlybackground="#FFFFFF",
+                fg=COLORS["text"],
+                relief="flat",
+                bd=0,
+                font=("Segoe UI Semibold", 11),
+                cursor="xterm",
+            )
+            name_entry.grid(row=0, column=2, sticky="ew", padx=(0, 10), pady=10)
+
+            def copy_message(message=message, copied_var=copied_var, paint_copied_state=paint_copied_state):
+                self.clipboard_clear()
+                self.clipboard_append(message)
+                copied_var.set(True)
+                paint_copied_state()
+
+            button = ttk.Button(row, text="Copiar Mensagem", command=copy_message, style="Primary.TButton")
+            button.grid(row=0, column=3, padx=(0, 10), pady=8)
 
     def export_excel(self):
         self._finish_active_cell()
@@ -2606,6 +2765,9 @@ class LiveSalesApp(tk.Tk):
         self.row_vars.clear()
         self.index_frames.clear()
         self.index_labels.clear()
+        self.time_check_vars.clear()
+        self.time_check_buttons.clear()
+        self.manual_time_vars.clear()
         self.cell_frames.clear()
         self.cell_entries.clear()
         self.clear_buttons.clear()
