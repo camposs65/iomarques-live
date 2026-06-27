@@ -5,13 +5,14 @@ import sys
 import tempfile
 import textwrap
 import tkinter as tk
+import time
 import uuid
 import ctypes
 from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from ctypes import wintypes
 
 try:
@@ -60,6 +61,15 @@ CHECKBOX_TEXT = "[ ]"
 REPORT_TWO_COLUMN_MIN_LINES = 38
 REPORT_PRINT_WIDTH_ONE_COLUMN = 90
 REPORT_PRINT_WIDTH_TWO_COLUMNS = 36
+DELIVERY_PRINT_ASSET = "entregas.png"
+EVALUATION_PRINT_ASSET = "avaliacoes.pdf"
+PIX_MESSAGE_TEXT = "\n".join(
+    [
+        "Chave pix: 51984854922 (celular)",
+        "Io Marques",
+        "Banco: Inter",
+    ]
+)
 
 COLORS = {
     "app_bg": "#F9F0F5",
@@ -74,6 +84,9 @@ COLORS = {
     "sold_row": "#EAF7EA",
     "active_border": "#7B3F7A",
     "timer_bg": "#FFFFFF",
+    "warning_bg": "#FFF1D6",
+    "warning_text": "#7A2E0E",
+    "duplicate_cell": "#FFE4E1",
 }
 
 
@@ -311,6 +324,31 @@ class LiveSalesApp(tk.Tk):
             side="left"
         )
 
+        self.duplicate_code_alert = tk.Frame(
+            self,
+            bg=COLORS["warning_bg"],
+            highlightbackground="#E2B56F",
+            highlightthickness=1,
+        )
+        tk.Label(
+            self.duplicate_code_alert,
+            text="!",
+            bg=COLORS["warning_bg"],
+            fg=COLORS["warning_text"],
+            font=("Segoe UI Semibold", 12),
+            width=2,
+        ).pack(side="left", padx=(10, 4), pady=7)
+        self.duplicate_code_alert_label = tk.Label(
+            self.duplicate_code_alert,
+            text="",
+            bg=COLORS["warning_bg"],
+            fg=COLORS["warning_text"],
+            font=("Segoe UI Semibold", 10),
+            anchor="w",
+            justify="left",
+        )
+        self.duplicate_code_alert_label.pack(side="left", fill="x", expand=True, padx=(0, 10), pady=7)
+
         self.table_shell = tk.Frame(self, bg=COLORS["grid"], bd=1)
         self.table_shell.pack(fill="both", expand=True, padx=24, pady=(0, 14))
 
@@ -347,8 +385,11 @@ class LiveSalesApp(tk.Tk):
         self.canvas.bind("<Configure>", self._on_canvas_configure)
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
 
-        footer = tk.Label(
-            self,
+        footer = tk.Frame(self, bg=COLORS["app_bg"])
+        footer.pack(fill="x", padx=24, pady=(0, 14))
+
+        footer_hint = tk.Label(
+            footer,
             text=(
                 "Clique em Iniciar live para gravar os tempos. "
                 "Ao preencher Valor ou Código, o Tempo da peça é salvo automaticamente."
@@ -356,11 +397,21 @@ class LiveSalesApp(tk.Tk):
             bg=COLORS["app_bg"],
             fg=COLORS["button_text"],
             font=("Segoe UI", 10),
+            anchor="w",
         )
-        footer.pack(fill="x", padx=24, pady=(0, 14))
+        footer_hint.pack(side="left", fill="x", expand=True)
+
+        tk.Label(
+            footer,
+            text="Created By Dudu",
+            bg=COLORS["app_bg"],
+            fg=COLORS["button_text"],
+            font=("Segoe UI", 9, "italic"),
+        ).pack(side="right", padx=(12, 0))
 
     def _build_final_action_buttons(self, parent):
         self._build_actions_menu(parent).pack(side="left", padx=(0, 8))
+        self._build_prints_menu(parent).pack(side="left", padx=(0, 8))
         ttk.Button(parent, text="Nova live / Limpar tudo", command=self.clear_all, style="Secondary.TButton").pack(
             side="left"
         )
@@ -396,6 +447,7 @@ class LiveSalesApp(tk.Tk):
         )
         menu.add_command(label="Resumo final", command=self.show_summary)
         menu.add_command(label="Mensagens clientes", command=self.show_client_messages)
+        menu.add_command(label="Automatizar mensagens", command=self.open_message_automation)
         menu.add_command(label="Exportar Excel", command=self.export_excel)
         menu.add_separator()
         menu.add_command(label="Imprimir todos", command=self.print_all_reports)
@@ -404,6 +456,40 @@ class LiveSalesApp(tk.Tk):
         menu.add_command(label="Imprimir não vendidas", command=self.print_unsold_pieces)
         menu.add_separator()
         menu.add_command(label="Histórico de lives", command=self.show_history)
+        button.configure(menu=menu)
+        return container
+
+    def _build_prints_menu(self, parent):
+        container = tk.Frame(parent, bg=COLORS["app_bg"])
+        button = tk.Menubutton(
+            container,
+            text="Impressões ▾",
+            bg=COLORS["secondary"],
+            fg=COLORS["button_text"],
+            activebackground="#E3C6E3",
+            activeforeground=COLORS["button_text"],
+            relief="flat",
+            bd=0,
+            padx=14,
+            pady=8,
+            font=("Segoe UI Semibold", 10),
+            cursor="hand2",
+        )
+        button.pack(side="left")
+
+        menu = tk.Menu(
+            button,
+            tearoff=False,
+            bg="#FFFFFF",
+            fg=COLORS["text"],
+            activebackground=COLORS["secondary"],
+            activeforeground=COLORS["button_text"],
+            font=("Segoe UI", 10),
+            bd=0,
+            relief="flat",
+        )
+        menu.add_command(label="Imprimir Entregas", command=self.print_delivery_pages)
+        menu.add_command(label="Imprimir Avaliações", command=self.print_evaluation_pages)
         button.configure(menu=menu)
         return container
 
@@ -673,6 +759,7 @@ class LiveSalesApp(tk.Tk):
     def _apply_filters(self):
         if not self.row_vars:
             self._refresh_filter_buttons()
+            self._refresh_duplicate_code_alert()
             return
         filters = self._active_filters()
         has_filters = any(filters)
@@ -696,6 +783,7 @@ class LiveSalesApp(tk.Tk):
 
         self._on_body_configure()
         self._refresh_filter_buttons()
+        self._refresh_duplicate_code_alert()
 
     def _refresh_filter_buttons(self):
         if not self.filter_buttons:
@@ -1085,8 +1173,9 @@ class LiveSalesApp(tk.Tk):
         for col in range(len(COLUMNS)):
             cell = self.cell_frames[row][col]
             entry = self.cell_entries[row][col]
-            cell.configure(bg=bg)
-            entry.configure(bg=bg, fg=COLORS["text"])
+            cell_bg = COLORS["duplicate_cell"] if col == CODE_COL and self._is_duplicate_code_row(row) else bg
+            cell.configure(bg=cell_bg)
+            entry.configure(bg=cell_bg, fg=COLORS["text"])
             button = self.clear_buttons[row][col]
             if button is not None:
                 button.configure(bg=bg)
@@ -1097,6 +1186,67 @@ class LiveSalesApp(tk.Tk):
         if row < 0 or row >= len(self.row_vars):
             return COLORS["table_bg"]
         return COLORS["sold_row"] if self.row_vars[row][CLIENT_COL].get().strip() else COLORS["table_bg"]
+
+    def _duplicate_code_groups(self):
+        grouped = defaultdict(list)
+        display_codes = {}
+        for row_index, row_vars in enumerate(self.row_vars):
+            code = row_vars[CODE_COL].get().strip()
+            if not code:
+                continue
+            key = code.casefold()
+            grouped[key].append(row_index)
+            display_codes.setdefault(key, code)
+        return [
+            (display_codes[key], rows)
+            for key, rows in grouped.items()
+            if len(rows) > 1
+        ]
+
+    def _is_duplicate_code_row(self, row):
+        if not self.live_running or not self._cell_exists(row, CODE_COL):
+            return False
+        code = self.row_vars[row][CODE_COL].get().strip()
+        if not code:
+            return False
+        key = code.casefold()
+        matches = [
+            row_index
+            for row_index, row_vars in enumerate(self.row_vars)
+            if row_vars[CODE_COL].get().strip().casefold() == key
+        ]
+        return len(matches) > 1
+
+    def _refresh_duplicate_code_alert(self):
+        if not hasattr(self, "duplicate_code_alert"):
+            return
+
+        groups = self._duplicate_code_groups() if self.live_running else []
+        for row_index in range(len(self.row_vars)):
+            self._refresh_duplicate_code_cell(row_index)
+
+        if not groups:
+            if self.duplicate_code_alert.winfo_ismapped():
+                self.duplicate_code_alert.pack_forget()
+            return
+
+        pieces = []
+        for code, rows in groups[:5]:
+            row_numbers = ", ".join(str(row + 1) for row in rows)
+            pieces.append(f"{code}: peças {row_numbers}")
+        extra = "" if len(groups) <= 5 else f" + {len(groups) - 5} outro(s)"
+        self.duplicate_code_alert_label.configure(
+            text=f"Atenção: códigos repetidos na live em andamento - {'; '.join(pieces)}{extra}"
+        )
+        if not self.duplicate_code_alert.winfo_ismapped():
+            self.duplicate_code_alert.pack(fill="x", padx=24, pady=(0, 10), before=self.table_shell)
+
+    def _refresh_duplicate_code_cell(self, row):
+        if not self._cell_exists(row, CODE_COL):
+            return
+        bg = COLORS["duplicate_cell"] if self._is_duplicate_code_row(row) else self._row_bg(row)
+        self.cell_frames[row][CODE_COL].configure(bg=bg)
+        self.cell_entries[row][CODE_COL].configure(bg=bg)
 
     def _ensure_blank_row(self):
         if not self.row_vars:
@@ -1326,15 +1476,22 @@ class LiveSalesApp(tk.Tk):
 
     def _current_live_stats(self):
         rows = self._rows()
+        presented_rows = [row for row in rows if row["valor"].strip() or row["codigo"].strip()]
         sold_rows = [row for row in rows if row["cliente"].strip()]
         total = sum((self._parse_money(row["valor"]) for row in sold_rows), Decimal("0"))
+        presented_total = sum((self._parse_money(row["valor"]) for row in presented_rows), Decimal("0"))
+        presented_count = len(presented_rows)
+        presented_average = presented_total / Decimal(presented_count) if presented_count else Decimal("0")
         clients = sorted({row["cliente"].strip() for row in sold_rows if row["cliente"].strip()}, key=str.lower)
         return {
             "pieces_count": len(rows),
+            "presented_count": presented_count,
             "sold_count": len(sold_rows),
             "clients_count": len(clients),
             "clients": clients,
             "total": total,
+            "presented_total": presented_total,
+            "presented_average": presented_average,
         }
 
     def _refresh_totals(self):
@@ -1733,6 +1890,7 @@ class LiveSalesApp(tk.Tk):
             self.pre_live_frame.pack(side="left", fill="x")
             self.start_button.state(["!disabled"])
             self.finish_button.state(["disabled"])
+        self._refresh_duplicate_code_alert()
 
     def _current_live_status(self):
         if self.live_running:
@@ -1839,6 +1997,10 @@ class LiveSalesApp(tk.Tk):
             f"Clientes: {stats['clients_count']}",
             f"Peças vendidas: {stats['sold_count']}",
             f"Total vendido: {self._format_money(stats['total'])}",
+            "",
+            f"Peças apresentadas: {stats['presented_count']}",
+            f"Valor total das peças apresentadas: {self._format_money(stats['presented_total'])}",
+            f"Valor médio das peças apresentadas: {self._format_money(stats['presented_average'])}",
         ]
 
     def _summary_sections(self):
@@ -1921,6 +2083,76 @@ class LiveSalesApp(tk.Tk):
         if not messages:
             return "Nenhuma peça com cliente titular ainda.\n"
         return "\n\n---\n\n".join(messages) + "\n"
+
+    def _client_message_jobs(self):
+        return [
+            {"cliente": cliente.strip().lstrip("@"), "mensagem": message}
+            for cliente, message in self._client_messages()
+            if cliente.strip() and message.strip()
+        ]
+
+    def open_message_automation(self):
+        self._finish_active_cell()
+        jobs = self._client_message_jobs()
+        if not jobs:
+            messagebox.showinfo("Automatizar mensagens", "Nenhuma peça com cliente titular ainda.")
+            return
+
+        automation_app = self._message_automation_app_path()
+        if automation_app is None:
+            messagebox.showerror(
+                "Automatizador não encontrado",
+                "Não encontrei o projeto de automação em:\n"
+                f"{Path.home() / 'iomarques-instagram-direct'}",
+            )
+            return
+
+        queue_path = Path(tempfile.gettempdir()) / "iomarques_fila_direct_clientes.json"
+        try:
+            queue_path.write_text(json.dumps(jobs, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as exc:
+            messagebox.showerror("Automatizar mensagens", f"Não consegui preparar a fila de Directs:\n{exc}")
+            return
+
+        self._launch_message_automation(automation_app, queue_path)
+
+    def _message_automation_app_path(self):
+        candidates = [
+            Path.home() / "iomarques-instagram-direct" / "app.py",
+            APP_DIR.parent / "iomarques-instagram-direct" / "app.py",
+            APP_DIR.parent.parent / "iomarques-instagram-direct" / "app.py",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _launch_message_automation(self, automation_app, queue_path):
+        app_args = [str(automation_app), "--queue-file", str(queue_path)]
+        commands = []
+        if not getattr(sys, "frozen", False):
+            commands.append([sys.executable, *app_args])
+        if sys.platform.startswith("win"):
+            commands.extend((["pythonw", *app_args], ["pyw", *app_args]))
+        commands.append(["python", *app_args])
+
+        popen_kwargs = {"cwd": str(automation_app.parent)}
+        if sys.platform.startswith("win"):
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+        last_error = None
+        for command in commands:
+            try:
+                subprocess.Popen(command, **popen_kwargs)
+            except OSError as exc:
+                last_error = exc
+                continue
+            return
+
+        messagebox.showerror(
+            "Automatizar mensagens",
+            f"Não consegui abrir o automatizador de Directs:\n{last_error}",
+        )
 
     def _clip_text(self, value, width):
         text = str(value).strip()
@@ -2038,7 +2270,7 @@ class LiveSalesApp(tk.Tk):
 
         window = tk.Toplevel(self)
         window.title("Mensagens para clientes - IoMarques Brechó")
-        window.geometry("760x540")
+        window.geometry("900x540")
         window.configure(bg=COLORS["app_bg"])
 
         top = tk.Frame(window, bg=COLORS["primary"])
@@ -2089,9 +2321,10 @@ class LiveSalesApp(tk.Tk):
             row.grid_columnconfigure(2, weight=1)
 
             copied_var = tk.BooleanVar(value=False)
+            pix_copied_var = tk.BooleanVar(value=False)
 
-            def paint_copied_state(copied_var=copied_var, row=row):
-                bg = copied_bg if copied_var.get() else "#FFFFFF"
+            def paint_copied_state(copied_var=copied_var, pix_copied_var=pix_copied_var, row=row):
+                bg = copied_bg if copied_var.get() or pix_copied_var.get() else "#FFFFFF"
                 row.configure(bg=bg)
                 for child in row.winfo_children():
                     if isinstance(child, tk.Checkbutton):
@@ -2149,6 +2382,31 @@ class LiveSalesApp(tk.Tk):
 
             button = ttk.Button(row, text="Copiar Mensagem", command=copy_message, style="Primary.TButton")
             button.grid(row=0, column=3, padx=(0, 10), pady=8)
+
+            pix_check = tk.Checkbutton(
+                row,
+                variable=pix_copied_var,
+                command=paint_copied_state,
+                bg="#FFFFFF",
+                activebackground="#FFFFFF",
+                selectcolor=copied_bg,
+                relief="flat",
+                bd=0,
+                padx=0,
+                pady=0,
+                cursor="hand2",
+                takefocus=False,
+            )
+            pix_check.grid(row=0, column=4, padx=(0, 4), pady=10)
+
+            def copy_pix(pix_copied_var=pix_copied_var, paint_copied_state=paint_copied_state):
+                self.clipboard_clear()
+                self.clipboard_append(PIX_MESSAGE_TEXT)
+                pix_copied_var.set(True)
+                paint_copied_state()
+
+            pix_button = ttk.Button(row, text="Copiar Pix", command=copy_pix, style="Secondary.TButton")
+            pix_button.grid(row=0, column=5, padx=(0, 10), pady=8)
 
     def export_excel(self):
         self._finish_active_cell()
@@ -2240,9 +2498,12 @@ class LiveSalesApp(tk.Tk):
         )
         metadata_sheet.append(["Duração registrada", self._format_elapsed(self._current_elapsed_seconds())])
         metadata_sheet.append(["Peças preenchidas", stats["pieces_count"]])
+        metadata_sheet.append(["Peças apresentadas", stats["presented_count"]])
         metadata_sheet.append(["Peças vendidas", stats["sold_count"]])
         metadata_sheet.append(["Clientes diferentes", stats["clients_count"]])
         metadata_sheet.append(["Total vendido", self._format_money(stats["total"])])
+        metadata_sheet.append(["Valor total das peças apresentadas", self._format_money(stats["presented_total"])])
+        metadata_sheet.append(["Valor médio das peças apresentadas", self._format_money(stats["presented_average"])])
 
         history_sheet = wb.create_sheet("Histórico de lives")
         history_sheet.append(
@@ -2686,6 +2947,167 @@ class LiveSalesApp(tk.Tk):
             subprocess.run(["lp", str(path)], check=True)
         else:
             subprocess.run(["lp", str(path)], check=True)
+
+    def print_delivery_pages(self):
+        return self._print_static_asset_pages(DELIVERY_PRINT_ASSET, "Entregas", print_as_image=True)
+
+    def print_evaluation_pages(self):
+        return self._print_static_asset_pages(EVALUATION_PRINT_ASSET, "Avaliações", print_as_pdf=True)
+
+    def _print_static_asset_pages(self, asset_filename, title, print_as_image=False, print_as_pdf=False):
+        self._finish_active_cell()
+        asset_path = self._asset_path(asset_filename)
+        if asset_path is None:
+            messagebox.showerror(
+                "Arquivo não encontrado",
+                f"Não encontrei o arquivo de {title.lower()} dentro da pasta assets.",
+            )
+            return False
+
+        page_count = simpledialog.askinteger(
+            f"Imprimir {title}",
+            f"Quantas páginas de {title.lower()} deseja imprimir?",
+            parent=self,
+            initialvalue=1,
+            minvalue=1,
+            maxvalue=200,
+        )
+        if page_count is None:
+            return False
+
+        try:
+            for page_index in range(page_count):
+                if print_as_pdf and sys.platform.startswith("win"):
+                    self._send_pdf_to_windows_printer(asset_path, title)
+                elif print_as_image and sys.platform.startswith("win"):
+                    self._send_image_to_windows_printer(asset_path, title)
+                else:
+                    self._send_file_to_printer(asset_path)
+                    if page_index < page_count - 1:
+                        time.sleep(0.8)
+        except Exception as exc:
+            messagebox.showerror(
+                "Não consegui imprimir",
+                f"Erro ao enviar {title.lower()} para a impressora:\n{exc}",
+            )
+            return False
+
+        plural = "página" if page_count == 1 else "páginas"
+        messagebox.showinfo(
+            "Impressão enviada",
+            f"Enviei {page_count} {plural} de {title.lower()} para a impressora padrão.",
+        )
+        return True
+
+    def _send_image_to_windows_printer(self, path, title):
+        from PIL import Image
+
+        with Image.open(path) as source:
+            image = self._prepare_print_image(source)
+
+        self._send_pil_image_to_windows_printer(image, title)
+
+    def _send_pdf_to_windows_printer(self, path, title):
+        import fitz
+        from PIL import Image
+
+        document = fitz.open(str(path))
+        try:
+            if document.page_count <= 0:
+                raise ValueError("O PDF não tem páginas para imprimir.")
+
+            zoom = 200 / 72
+            matrix = fitz.Matrix(zoom, zoom)
+            for page_number in range(document.page_count):
+                page = document.load_page(page_number)
+                pixmap = page.get_pixmap(matrix=matrix, colorspace=fitz.csRGB, alpha=False)
+                image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+                page_title = title if document.page_count == 1 else f"{title} - página {page_number + 1}"
+                self._send_pil_image_to_windows_printer(image, page_title)
+        finally:
+            document.close()
+
+    def _prepare_print_image(self, source):
+        from PIL import Image
+
+        if source.mode in ("RGBA", "LA") or "transparency" in source.info:
+            transparent = source.convert("RGBA")
+            image = Image.new("RGB", transparent.size, "#FFFFFF")
+            image.paste(transparent, mask=transparent.getchannel("A"))
+            return image
+        return source.convert("RGB")
+
+    def _send_pil_image_to_windows_printer(self, image, title):
+        from PIL import ImageWin
+
+        printer_name = self._default_windows_printer()
+        gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+
+        class DOCINFOW(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", ctypes.c_int),
+                ("lpszDocName", wintypes.LPCWSTR),
+                ("lpszOutput", wintypes.LPCWSTR),
+                ("lpszDatatype", wintypes.LPCWSTR),
+                ("fwType", wintypes.DWORD),
+            ]
+
+        gdi32.CreateDCW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.c_void_p]
+        gdi32.CreateDCW.restype = wintypes.HDC
+        gdi32.DeleteDC.argtypes = [wintypes.HDC]
+        gdi32.GetDeviceCaps.argtypes = [wintypes.HDC, ctypes.c_int]
+        gdi32.GetDeviceCaps.restype = ctypes.c_int
+        gdi32.StartDocW.argtypes = [wintypes.HDC, ctypes.POINTER(DOCINFOW)]
+        gdi32.StartDocW.restype = ctypes.c_int
+        gdi32.EndDoc.argtypes = [wintypes.HDC]
+        gdi32.AbortDoc.argtypes = [wintypes.HDC]
+        gdi32.StartPage.argtypes = [wintypes.HDC]
+        gdi32.EndPage.argtypes = [wintypes.HDC]
+
+        hdc = gdi32.CreateDCW("WINSPOOL", printer_name, None, None)
+        if not hdc:
+            raise ctypes.WinError(ctypes.get_last_error())
+
+        doc_started = False
+        page_started = False
+        try:
+            dpi_x = max(1, gdi32.GetDeviceCaps(hdc, 88))
+            dpi_y = max(1, gdi32.GetDeviceCaps(hdc, 90))
+            page_width = max(1, gdi32.GetDeviceCaps(hdc, 8))
+            page_height = max(1, gdi32.GetDeviceCaps(hdc, 10))
+            margin_x = max(20, int(dpi_x * 0.12))
+            margin_y = max(20, int(dpi_y * 0.12))
+            printable_width = max(1, page_width - margin_x * 2)
+            printable_height = max(1, page_height - margin_y * 2)
+
+            scale = min(printable_width / image.width, printable_height / image.height)
+            draw_width = max(1, int(image.width * scale))
+            draw_height = max(1, int(image.height * scale))
+            left = margin_x + (printable_width - draw_width) // 2
+            top = margin_y + (printable_height - draw_height) // 2
+
+            docinfo = DOCINFOW(ctypes.sizeof(DOCINFOW), f"IoMarques Brechó - {title}", None, None, 0)
+            if gdi32.StartDocW(hdc, ctypes.byref(docinfo)) <= 0:
+                raise ctypes.WinError(ctypes.get_last_error())
+            doc_started = True
+            if gdi32.StartPage(hdc) <= 0:
+                raise ctypes.WinError(ctypes.get_last_error())
+            page_started = True
+
+            ImageWin.Dib(image).draw(hdc, (left, top, left + draw_width, top + draw_height))
+
+            if gdi32.EndPage(hdc) <= 0:
+                raise ctypes.WinError(ctypes.get_last_error())
+            page_started = False
+            if gdi32.EndDoc(hdc) <= 0:
+                raise ctypes.WinError(ctypes.get_last_error())
+            doc_started = False
+        except Exception:
+            if page_started or doc_started:
+                gdi32.AbortDoc(hdc)
+            raise
+        finally:
+            gdi32.DeleteDC(hdc)
 
     def print_report(self, show_success=True):
         self._finish_active_cell()
