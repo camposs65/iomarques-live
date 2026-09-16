@@ -146,6 +146,12 @@ class Installer(tk.Tk):
             command.append("app.py")
             self.run_command(command, "Falha ao criar o executável")
 
+            self.set_step(80, "Preparando integração...", "Configurando o envio seguro das peças não vendidas.")
+            self.run_command(
+                [sys.executable, "preparar_config_integracao.py"],
+                "Falha ao preparar a integração",
+            )
+
             self.set_step(86, "Criando atalho na Área de Trabalho...", str(EXE_PATH))
             if not EXE_PATH.exists():
                 raise RuntimeError(f"Executável não encontrado em:\n{EXE_PATH}")

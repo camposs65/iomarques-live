@@ -62,6 +62,8 @@ Os dados ficam salvos junto do executável:
 - `backups\live_atual.bak.json`: cópia de recuperação da live atual.
 - `backups\historico_lives.bak.json`: cópia de recuperação do histórico.
 - `backups\live_atual_*.json`: snapshots recentes da live atual, mantidos automaticamente.
+- `integracao_pendencias.json`: fila local com somente as lives e peças não vendidas que aguardam sincronização.
+- `integracao_sessao.dat`: sessão do Controle do Brechó protegida pelo Windows para o usuário atual.
 
 Esses arquivos não devem ir para Git/GitHub; eles são dados reais de operação da loja.
 
@@ -85,6 +87,25 @@ Esses arquivos não devem ir para Git/GitHub; eles são dados reais de operaçã
 - Use a setinha no cabeçalho de cada coluna para filtrar, como no Excel.
 - Passe o mouse sobre `Cliente` ou `Suplente` para mostrar o `X` de remoção.
 - Durante a live, o cabeçalho grande da marca fica escondido para dar mais espaço à planilha.
+
+## Sincronização das peças não vendidas
+
+- Clique em `Conectar recortes` e entre com o mesmo usuário e senha do aplicativo Controle do Brechó.
+- A senha não é armazenada. Depois do primeiro acesso, somente a sessão é guardada criptografada pelo Windows.
+- Ao finalizar uma live, o app envia automaticamente apenas a identificação da live, seus horários e as peças preenchidas que continuam sem cliente titular.
+- Clientes e suplentes não são enviados. O vídeo também nunca passa pelo programa nem pelo Supabase.
+- Alterações feitas depois da live são sincronizadas novamente. Se uma peça receber cliente, ela deixa de aparecer como não vendida.
+- Se a internet falhar, o histórico local continua funcionando e o envio fica como `Pendente`; o app tenta novamente depois.
+- O status aparece abaixo do total vendido: `Conectar recortes`, `Envio pendente`, `Enviando não vendidas...` ou `Não vendidas sincronizadas`.
+- A importação manual de `historico_lives.json` na PWA continua disponível como alternativa.
+
+Ao gerar o executável, `preparar_config_integracao.py` cria o arquivo ignorado `dist\integracao_supabase.json`. Ele usa, nesta ordem:
+
+1. Variáveis `IOMARQUES_SUPABASE_URL`, `IOMARQUES_SUPABASE_PUBLISHABLE_KEY` e `IOMARQUES_AUTH_EMAIL_BASE`.
+2. O arquivo local ignorado `integracao_supabase.local.json`.
+3. O `.env.local` do projeto irmão `brecho-controle`, quando os dois projetos estão lado a lado.
+
+Leve a pasta `dist` completa para o computador da loja. O arquivo de configuração contém apenas os dados públicos necessários para o aplicativo se conectar; nunca use a chave `service_role`.
 
 Exemplo da IoMarques Brechó:
 

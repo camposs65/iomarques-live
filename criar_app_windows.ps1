@@ -35,6 +35,9 @@ if (-not (Test-Path $exePath)) {
     throw "Executavel nao encontrado em: $exePath"
 }
 
+Write-Host "Preparando integracao com o Controle do Brecho..."
+python preparar_config_integracao.py
+
 $desktop = [Environment]::GetFolderPath("Desktop")
 $shortcutPath = Join-Path $desktop "IoMarques Brecho.lnk"
 

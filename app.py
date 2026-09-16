@@ -15,6 +15,8 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from ctypes import wintypes
 
+from supabase_sync import SupabaseHistorySync
+
 try:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -127,9 +129,22 @@ class LiveSalesApp(tk.Tk):
         self.last_live_snapshot_at = None
         self.logo_header_image = None
         self.logo_icon_image = None
+        self.sync_manager = None
+        self.sync_status = "starting"
+        self.sync_detail = "Preparando sincronização."
+        self.sync_username = ""
+        self.sync_window = None
+        self.sync_dialog_status_label = None
 
         self._setup_style()
         self._build_ui()
+
+        self.sync_manager = SupabaseHistorySync(
+            APP_DIR,
+            Path(__file__).resolve().parent,
+            self._handle_sync_status,
+        )
+        self.sync_manager.start()
 
         saved_data = self._read_saved_data()
         self._restore_live_state(saved_data)
@@ -137,7 +152,8 @@ class LiveSalesApp(tk.Tk):
         if not loaded:
             self._add_row()
 
-        self._read_history()
+        history = self._read_history()
+        self.sync_manager.queue_history(history)
         self._refresh_totals()
         self._refresh_live_controls()
         self._schedule_timer_tick()
@@ -198,6 +214,228 @@ class LiveSalesApp(tk.Tk):
             background=[("active", "#E3C6E3"), ("pressed", "#D8B6D8")],
             foreground=[("active", COLORS["button_text"])],
         )
+
+    def _handle_sync_status(self, status, detail, username):
+        def apply_status():
+            if not self.winfo_exists():
+                return
+            self.sync_status = status
+            self.sync_detail = detail
+            self.sync_username = username
+            labels = {
+                "not_configured": "Integração não configurada",
+                "auth_required": "Conectar recortes",
+                "pending": "Envio pendente",
+                "syncing": "Enviando não vendidas...",
+                "synced": "Não vendidas sincronizadas",
+                "starting": "Preparando sincronização...",
+            }
+            colors = {
+                "not_configured": COLORS["warning_text"],
+                "auth_required": COLORS["button_text"],
+                "pending": COLORS["warning_text"],
+                "syncing": COLORS["primary"],
+                "synced": "#2E6F47",
+                "starting": COLORS["button_text"],
+            }
+            self.sync_status_button.configure(
+                text=labels.get(status, "Sincronização"),
+                fg=colors.get(status, COLORS["button_text"]),
+            )
+            if (
+                self.sync_dialog_status_label is not None
+                and self.sync_dialog_status_label.winfo_exists()
+            ):
+                self.sync_dialog_status_label.configure(text=detail)
+
+        try:
+            self.after(0, apply_status)
+        except tk.TclError:
+            pass
+
+    def open_sync_dialog(self):
+        if self.sync_window is not None and self.sync_window.winfo_exists():
+            self.sync_window.lift()
+            self.sync_window.focus_force()
+            return
+
+        window = tk.Toplevel(self)
+        self.sync_window = window
+        window.title("Sincronização dos recortes")
+        window.geometry("510x480")
+        window.minsize(470, 440)
+        window.configure(bg=COLORS["app_bg"])
+        window.transient(self)
+
+        def close_window():
+            self.sync_dialog_status_label = None
+            self.sync_window = None
+            window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", close_window)
+
+        top = tk.Frame(window, bg=COLORS["primary"])
+        top.pack(fill="x")
+        tk.Label(
+            top,
+            text="Enviar peças não vendidas",
+            bg=COLORS["primary"],
+            fg="#FFFFFF",
+            font=("Segoe UI Semibold", 17),
+        ).pack(anchor="w", padx=22, pady=(17, 3))
+        tk.Label(
+            top,
+            text="Integração com o Controle do Brechó",
+            bg=COLORS["primary"],
+            fg=COLORS["app_bg"],
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", padx=22, pady=(0, 17))
+
+        body = tk.Frame(window, bg=COLORS["app_bg"])
+        body.pack(fill="both", expand=True, padx=24, pady=20)
+        tk.Label(
+            body,
+            text=(
+                "O histórico continua salvo neste computador. O app envia somente "
+                "a live e as peças preenchidas que estão sem cliente titular."
+            ),
+            bg=COLORS["app_bg"],
+            fg=COLORS["text"],
+            justify="left",
+            wraplength=450,
+            font=("Segoe UI", 10),
+        ).pack(anchor="w")
+
+        self.sync_dialog_status_label = tk.Label(
+            body,
+            text=self.sync_detail,
+            bg=COLORS["secondary"],
+            fg=COLORS["button_text"],
+            justify="left",
+            wraplength=420,
+            padx=12,
+            pady=9,
+            font=("Segoe UI Semibold", 9),
+        )
+        self.sync_dialog_status_label.pack(fill="x", pady=(15, 16))
+
+        if not self.sync_manager or not self.sync_manager.is_configured:
+            tk.Label(
+                body,
+                text=(
+                    "Este executável foi criado sem o arquivo de configuração da integração. "
+                    "Gere novamente a pasta dist antes de levar o app para a loja."
+                ),
+                bg=COLORS["app_bg"],
+                fg=COLORS["warning_text"],
+                justify="left",
+                wraplength=450,
+                font=("Segoe UI", 10),
+            ).pack(anchor="w")
+            ttk.Button(
+                body,
+                text="Fechar",
+                command=close_window,
+                style="Secondary.TButton",
+            ).pack(anchor="e", pady=(22, 0))
+            return
+
+        if self.sync_manager.is_authenticated:
+            account = self.sync_manager.username or self.sync_username
+            tk.Label(
+                body,
+                text=f"Conta conectada: @{account}",
+                bg=COLORS["app_bg"],
+                fg=COLORS["text"],
+                font=("Segoe UI Semibold", 11),
+            ).pack(anchor="w")
+
+            actions = tk.Frame(body, bg=COLORS["app_bg"])
+            actions.pack(fill="x", pady=(22, 0))
+
+            def sync_now():
+                self.sync_manager.queue_history(self._read_history(), immediate=True)
+                self.sync_manager.sync_now()
+                close_window()
+
+            def disconnect():
+                if not messagebox.askyesno(
+                    "Desconectar conta?",
+                    "Os históricos e envios pendentes continuarão salvos neste computador.",
+                    parent=window,
+                ):
+                    return
+                self.sync_manager.logout()
+                close_window()
+
+            ttk.Button(
+                actions,
+                text="Sincronizar agora",
+                command=sync_now,
+                style="Primary.TButton",
+            ).pack(side="left")
+            ttk.Button(
+                actions,
+                text="Desconectar",
+                command=disconnect,
+                style="Secondary.TButton",
+            ).pack(side="right")
+            return
+
+        form = tk.Frame(body, bg=COLORS["app_bg"])
+        form.pack(fill="x")
+        tk.Label(
+            form,
+            text="Usuário",
+            bg=COLORS["app_bg"],
+            fg=COLORS["text"],
+            font=("Segoe UI Semibold", 10),
+        ).pack(anchor="w")
+        username_entry = tk.Entry(form, font=("Segoe UI", 11), relief="solid", bd=1)
+        username_entry.pack(fill="x", ipady=6, pady=(4, 12))
+        tk.Label(
+            form,
+            text="Senha",
+            bg=COLORS["app_bg"],
+            fg=COLORS["text"],
+            font=("Segoe UI Semibold", 10),
+        ).pack(anchor="w")
+        password_entry = tk.Entry(form, show="•", font=("Segoe UI", 11), relief="solid", bd=1)
+        password_entry.pack(fill="x", ipady=6, pady=(4, 14))
+
+        login_button = ttk.Button(form, text="Conectar", style="Primary.TButton")
+        login_button.pack(anchor="e")
+
+        def finish_login(success, message):
+            def update_dialog():
+                if not window.winfo_exists():
+                    return
+                login_button.state(["!disabled"])
+                self.sync_dialog_status_label.configure(text=message)
+                if success:
+                    close_window()
+
+            try:
+                self.after(0, update_dialog)
+            except tk.TclError:
+                pass
+
+        def login(_event=None):
+            username = username_entry.get().strip()
+            password = password_entry.get()
+            if not username or not password:
+                self.sync_dialog_status_label.configure(
+                    text="Preencha o usuário e a senha."
+                )
+                return
+            login_button.state(["disabled"])
+            self.sync_dialog_status_label.configure(text="Conectando com segurança...")
+            self.sync_manager.login_async(username, password, finish_login)
+
+        login_button.configure(command=login)
+        username_entry.bind("<Return>", lambda _event: password_entry.focus_set())
+        password_entry.bind("<Return>", login)
+        username_entry.focus_set()
 
     def _build_ui(self):
         self.brand_header = tk.Frame(self, bg=COLORS["primary"])
@@ -290,6 +528,23 @@ class LiveSalesApp(tk.Tk):
             font=("Segoe UI Semibold", 10),
         )
         self.total_sold_label.pack(side="top", anchor="e", pady=(4, 0))
+
+        self.sync_status_button = tk.Button(
+            timer_panel,
+            text="Conectar recortes",
+            command=self.open_sync_dialog,
+            bg=COLORS["app_bg"],
+            fg=COLORS["button_text"],
+            activebackground=COLORS["secondary"],
+            activeforeground=COLORS["button_text"],
+            relief="flat",
+            bd=0,
+            padx=0,
+            pady=2,
+            cursor="hand2",
+            font=("Segoe UI Semibold", 9, "underline"),
+        )
+        self.sync_status_button.pack(side="top", anchor="e", pady=(2, 0))
 
         self.search_panel = tk.Frame(self, bg=COLORS["app_bg"])
 
@@ -1297,6 +1552,12 @@ class LiveSalesApp(tk.Tk):
         )
         if saved:
             self._write_live_snapshot(data, force=force_snapshot, show_error=show_error)
+            if (
+                self.live_id
+                and not self.live_running
+                and self.live_finished_at is not None
+            ):
+                self._upsert_current_live_history(self.live_finished_at)
 
     def _read_json_with_backup(self, path, backup_path, default):
         data = self._read_json_file(path)
@@ -1461,18 +1722,23 @@ class LiveSalesApp(tk.Tk):
             return data
         return data.get("lives", []) if isinstance(data, dict) else []
 
-    def _write_history(self, lives):
+    def _write_history(self, lives, deleted_live_ids=None):
         data = {
             "updated_at": datetime.now().isoformat(timespec="seconds"),
             "lives": lives,
         }
-        self._write_json_with_backup(
+        saved = self._write_json_with_backup(
             HISTORY_PATH,
             data,
             HISTORY_BACKUP_PATH,
             "Erro ao salvar histórico",
             f"Não consegui salvar o histórico de lives:\n{{error}}",
         )
+        if saved and self.sync_manager:
+            self.sync_manager.queue_history(lives)
+            for live_id in deleted_live_ids or []:
+                self.sync_manager.queue_delete(live_id)
+        return saved
 
     def _current_live_stats(self):
         rows = self._rows()
@@ -1527,6 +1793,8 @@ class LiveSalesApp(tk.Tk):
         replaced = False
         for index, live in enumerate(lives):
             if live.get("id") == record["id"]:
+                if live == record:
+                    return
                 lives[index] = record
                 replaced = True
                 break
@@ -1649,7 +1917,8 @@ class LiveSalesApp(tk.Tk):
                         continue
                     lives.append(record)
 
-            self._write_history(lives)
+            deleted_ids = [live_id] if live_id else []
+            self._write_history(lives, deleted_live_ids=deleted_ids)
             populate_history()
 
         def open_selected_history():
@@ -3211,6 +3480,8 @@ class LiveSalesApp(tk.Tk):
             self.after_cancel(self.timer_job)
         if self.autosave_job is not None:
             self.after_cancel(self.autosave_job)
+        if self.sync_manager is not None:
+            self.sync_manager.shutdown()
         self.destroy()
 
 

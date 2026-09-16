@@ -21,6 +21,10 @@ backups/
 *.bak.json
 live_atual_*.json
 *.tmp
+integracao_supabase.json
+integracao_supabase.local.json
+integracao_sessao.dat
+integracao_pendencias.json
 
 # Local exports and reports
 *.xlsx
