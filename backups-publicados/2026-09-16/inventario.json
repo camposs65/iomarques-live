@@ -1,0 +1,281 @@
+{
+  "coletado_em": "2026-09-16T16:14:00.8584697-03:00",
+  "total_arquivos": 55,
+  "arquivos": [
+    {
+      "arquivo": "aplicativo/historico_lives.json",
+      "bytes": 454811,
+      "sha256": "B1A2E3341425F4F1D3424A354FE37E33DC1BDE4A278D56A9C47467F5E34CE1B4"
+    },
+    {
+      "arquivo": "aplicativo/live_atual.json",
+      "bytes": 9700,
+      "sha256": "745EDAE54ACD3D20E26EFFFF17040963240B2D7D6491BA9E15129BC68261FC15"
+    },
+    {
+      "arquivo": "aplicativo/backups/historico_lives_pre_correcao_codigo_20260505_230113.json",
+      "bytes": 20352,
+      "sha256": "AC7B9A9127085A0938D4393E3D24FB938502BE56EEE907EF90AFD505352DB9F2"
+    },
+    {
+      "arquivo": "aplicativo/backups/historico_lives_pre_recuperacao_20260505_230038.json",
+      "bytes": 1997,
+      "sha256": "A3826BC68578093611CF6DA292911EF6264A3F7083DDBBB1964A7D15D103605B"
+    },
+    {
+      "arquivo": "aplicativo/backups/historico_lives.bak.json",
+      "bytes": 454811,
+      "sha256": "B1A2E3341425F4F1D3424A354FE37E33DC1BDE4A278D56A9C47467F5E34CE1B4"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_214618.json",
+      "bytes": 9245,
+      "sha256": "2A3D173924B206230401AE000583F4E0EF28F3D6A618C3209EE488A3807CF708"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_214718.json",
+      "bytes": 9381,
+      "sha256": "5E53BD401D23F8729E5C8B0B28069C330C8C1E3A2F5DD2933B4EEC080CCB198A"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_214818.json",
+      "bytes": 9404,
+      "sha256": "0B4C29032235D4F291DA6AC95C2293684BB6EAF9BE28AD7B7400BF939BEB58E3"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_214919.json",
+      "bytes": 9543,
+      "sha256": "8B7BA0624D157FCFAFC0AB6CA1C20F98FB8E4F76942B7F2A03A6FD3DF7784A50"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_215019.json",
+      "bytes": 9696,
+      "sha256": "6FD91455F7BE603978B1A8FDD4FE4E0778CB3A6BEEECD223CFFF58D81F96CA1E"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_215119.json",
+      "bytes": 9696,
+      "sha256": "A2B2587D4A76E24C9C306751AA7B25E9E9B25711BA1BF2F1C34E395D882ED2BA"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_215139.json",
+      "bytes": 9700,
+      "sha256": "3FF2D699DEC195DA29C1CC1807514DD3F01F7782AC68E46B461529DC91766D1D"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_215249.json",
+      "bytes": 9700,
+      "sha256": "3CA2A3023DC33BFB7220FFEA272E7DC1DDD45D3A544BCEF52BD3B9075F6026CB"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_215349.json",
+      "bytes": 9700,
+      "sha256": "804354201A055718FC2B5DA286433DA86E8AC2D365E23C51948A906CE8A3B7AF"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_215449.json",
+      "bytes": 9700,
+      "sha256": "258EB78E55858359E5BC49FEEF93A4F71AEC2E5ECA9E506F86D2611FB53E3D24"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_215550.json",
+      "bytes": 9700,
+      "sha256": "B39E75BFA029963582A563B6BE4E311F118A87F507063629D0E2C4D55FA05163"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_215650.json",
+      "bytes": 9700,
+      "sha256": "1644C2C4BEF36661B4EDE22F3278EE9FE03BB865E28BD47367E691AC1A66D23D"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_215750.json",
+      "bytes": 9700,
+      "sha256": "0AEC74FAE4BE0F998C4774299C6F16455A15E47FAFA085367BAF1FFE79786010"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_215850.json",
+      "bytes": 9700,
+      "sha256": "4DEB050921B598B585EE155B6F19BDF170854EA7BAC0051A7AB9ABF6089FC948"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_215950.json",
+      "bytes": 9700,
+      "sha256": "61DF6721D4C2F5C7FF64D646682007179388D0E11C5C73D3C90B69A4E74C699A"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_220050.json",
+      "bytes": 9700,
+      "sha256": "8C46ED8EACFC89DCF702B601E44D5C1CCB658CBC0C73A8F109775C28CAC2712B"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_220150.json",
+      "bytes": 9700,
+      "sha256": "053E8C37A7AE28145DBD1E69689BA14AE3EB9BCE9100AE8A256F1DD1C3073427"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_220250.json",
+      "bytes": 9700,
+      "sha256": "433B2FB707BF973107BCE17ED2DDD0D9C92DFF8F4A9A384AD383AB3633153CAA"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_220352.json",
+      "bytes": 9700,
+      "sha256": "330A7DA3ECBC485D868F924A2BFF1AF21FAE8E4C04B81C7C8EC23AE1F6C592FF"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_220452.json",
+      "bytes": 9700,
+      "sha256": "A0E27FDDD62E1ACEFE52A4F0BD299CF41FF8A2F8DBA59D0017B1AA86CC89D399"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_220552.json",
+      "bytes": 9700,
+      "sha256": "794A72564F6065EFF5C42EE3773B836D146730954AAC28A17B75EB0A7860E60B"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_220652.json",
+      "bytes": 9700,
+      "sha256": "59D9A015389CFEC9772E546869FA6F4C40BA1BD37EC9FAD4C32B9DB12BF5E3F7"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_220753.json",
+      "bytes": 9700,
+      "sha256": "CE48FCC170F006839E940B2E12F18F8E188427BC19010B2E6D36C6672035D79A"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_220853.json",
+      "bytes": 9700,
+      "sha256": "1A903E77AC89DDD251BDD80CC21AAFB055CC4251AFCD0B4985DDB14627F32D1B"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_220953.json",
+      "bytes": 9700,
+      "sha256": "66E4E3EBADC8F3D9076D198F6D341E593A96DFD2A9307E0A902DD98D88E6C136"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_221053.json",
+      "bytes": 9700,
+      "sha256": "E440E47E6D855FD05DAFB668E0094E93EB8476821B4F8FB85AC7568509D2DF72"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_221153.json",
+      "bytes": 9700,
+      "sha256": "A9EF4F3663F56CEED8C603F85A79A5F093405EA3453CD29E0AD648C2F6EEC522"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_221254.json",
+      "bytes": 9700,
+      "sha256": "ADBBB061DF5DD59DF6C95CD776A74769A1A24077E0B56E40C4B7801C7877BCA4"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_221354.json",
+      "bytes": 9700,
+      "sha256": "C994A295963025ACF55B6BADEB0D4732001A305D8C572FD5F593FF4BE2ADB845"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual_20260915_221404.json",
+      "bytes": 9700,
+      "sha256": "745EDAE54ACD3D20E26EFFFF17040963240B2D7D6491BA9E15129BC68261FC15"
+    },
+    {
+      "arquivo": "aplicativo/backups/live_atual.bak.json",
+      "bytes": 9700,
+      "sha256": "745EDAE54ACD3D20E26EFFFF17040963240B2D7D6491BA9E15129BC68261FC15"
+    },
+    {
+      "arquivo": "desenvolvimento/live_atual.json",
+      "bytes": 662,
+      "sha256": "D298F47C1B59CDC9F775C84E29636CAA5AB6086A405A638DEF9644C7CF6DCD71"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260504_224529.json",
+      "bytes": 655,
+      "sha256": "6AAFBD8FAA2BF780F1A4E3964EE4C6344B9A9B27BFA020BA4D75843BFEF7C9AD"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260504_224542.json",
+      "bytes": 662,
+      "sha256": "0438AEBB4F8B22645CB14ECFDA7B96A4EA8193B372B0613436E1158F0C752709"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260504_224626.json",
+      "bytes": 662,
+      "sha256": "4C29B3F84A8144323BEF524A4D87309E89AEF64179EF5FC94151958B0C9A5041"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260504_224641.json",
+      "bytes": 662,
+      "sha256": "B9C6151CFFADACB71CF4F4D6AF503B760463C26E1CC039FE3AFCCA7251D59D20"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260505_210354.json",
+      "bytes": 662,
+      "sha256": "0896D5B5CDAB7EF99E3527A36A40B718C1BE8F24B1FCC7BA0B04256EEA6A9F4C"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260505_211357.json",
+      "bytes": 662,
+      "sha256": "1D28342B6D87E1D1DAAB2D37635580A7F6F053583AF9B4EB5ACCDA25464BB68F"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260505_211408.json",
+      "bytes": 662,
+      "sha256": "D397DE93E41CA5AC5469B90BAD2C83C85C5C8FEA2525636AF211FBCDF30BB2F5"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260505_224655.json",
+      "bytes": 662,
+      "sha256": "72E6E3873793823C9FF04B6CA55EB16A69318F6E4853CB20311884F36BAD7F3D"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260505_224706.json",
+      "bytes": 662,
+      "sha256": "66FBE346BC7C304BB3263F8FC4F6C3B414F5D5010A55D81ED735A9D42077CD50"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260505_225521.json",
+      "bytes": 662,
+      "sha256": "5268D8779EEC410B2EE4C00FF4AB747837EAD0C0A0931A3B38CA0B79E1324D76"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260627_112238.json",
+      "bytes": 662,
+      "sha256": "614FE706B39A82D054C989514345A28BFEF64AC86C26138BCF1B6E8759E2409B"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260627_113145.json",
+      "bytes": 662,
+      "sha256": "ABCC31C5D3865DA69B3AA56451CECE761B31A180A4A20FBA031DDAE5F240885C"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260627_114343.json",
+      "bytes": 662,
+      "sha256": "F5B6006BD12DFEE729B414DC75B051112BB51B9A5AC5A6164552864F267F509B"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260627_114608.json",
+      "bytes": 662,
+      "sha256": "D9D3635AE1673BB47346DE1753C54BD481F1B5D0387E2E14057F6DFB8A26B8BF"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260627_115516.json",
+      "bytes": 662,
+      "sha256": "B537A849130C5834480FA2575573DAC75E697D94A0F853C4717DED731D1A8416"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260627_115527.json",
+      "bytes": 662,
+      "sha256": "CB458C3E541764D9A14B17CE3D15E12F746FD670A93B8FF188FFD8420228E6CA"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual_20260819_214200.json",
+      "bytes": 662,
+      "sha256": "D298F47C1B59CDC9F775C84E29636CAA5AB6086A405A638DEF9644C7CF6DCD71"
+    },
+    {
+      "arquivo": "desenvolvimento/backups/live_atual.bak.json",
+      "bytes": 662,
+      "sha256": "D298F47C1B59CDC9F775C84E29636CAA5AB6086A405A638DEF9644C7CF6DCD71"
+    }
+  ]
+}

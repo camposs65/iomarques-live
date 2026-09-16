@@ -1,0 +1,782 @@
+{
+  "updated_at": "2026-05-05T23:00:38",
+  "lives": [
+    {
+      "id": "live_20260505_214142_72a976",
+      "started_at": "2026-05-05T21:41:42",
+      "finished_at": "2026-05-05T22:33:01",
+      "duration": "00:51:19",
+      "pieces_count": 47,
+      "sold_count": 28,
+      "clients_count": 21,
+      "clients": [
+        "a.carmem1",
+        "aaline_sf",
+        "aline_cristall",
+        "bonfanti.catia",
+        "chahartmann",
+        "chimabyliz",
+        "dai_nasciment0",
+        "darlise_santos",
+        "denise_bortolini",
+        "fofoca_amiga",
+        "joycepigozzi",
+        "karolina.marques_",
+        "keila.guedes",
+        "leonicecornelius",
+        "liliperin",
+        "lucianarequia",
+        "marciamf2024",
+        "marcianmatos",
+        "patriciaportodarosa",
+        "rha_ventura",
+        "tati_lua_loro_lucca"
+      ],
+      "total": "R$ 1.387,20",
+      "rows": [
+        {
+          "valor": "R$ 34,90",
+          "codigo": "013",
+          "cliente": "tati_lua_loro_lucca",
+          "suplente": "",
+          "tempo": "00:00:25"
+        },
+        {
+          "valor": "R$ 89,90",
+          "codigo": "186",
+          "cliente": "dai_nasciment0",
+          "suplente": "",
+          "tempo": "00:01:29"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "026",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:01:51"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "173",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:02:25"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "278",
+          "cliente": "aline_cristall",
+          "suplente": "",
+          "tempo": "00:03:20"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "270",
+          "cliente": "fofoca_amiga",
+          "suplente": "trem.pedagogico",
+          "tempo": "00:04:14"
+        },
+        {
+          "valor": "R$ 69,90",
+          "codigo": "074",
+          "cliente": "liliperin",
+          "suplente": "tati_lua_loro_lucca",
+          "tempo": "00:05:19"
+        },
+        {
+          "valor": "R$ 34,90",
+          "codigo": "288",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:05:57"
+        },
+        {
+          "valor": "R$ 59,90",
+          "codigo": "005",
+          "cliente": "aaline_sf",
+          "suplente": "daianepiasda",
+          "tempo": "00:06:43"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "025",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:08:07"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "081",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:08:39"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "279",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:09:26"
+        },
+        {
+          "valor": "R$ 34,90",
+          "codigo": "166",
+          "cliente": "patriciaportodarosa",
+          "suplente": "",
+          "tempo": "00:10:01"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "203",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:10:58"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "133",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:11:29"
+        },
+        {
+          "valor": "R$ 59,90",
+          "codigo": "112",
+          "cliente": "leonicecornelius",
+          "suplente": "bonfanti.catia",
+          "tempo": "00:12:23"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "269",
+          "cliente": "joycepigozzi",
+          "suplente": "carlabrito.fisioterapeuta",
+          "tempo": "00:13:40"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "014",
+          "cliente": "joycepigozzi",
+          "suplente": "rityelimartins",
+          "tempo": "00:14:20"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "252",
+          "cliente": "chahartmann",
+          "suplente": "mirian_cardosoc",
+          "tempo": "00:15:37"
+        },
+        {
+          "valor": "R$ 59,90",
+          "codigo": "101",
+          "cliente": "chahartmann",
+          "suplente": "inara.correa",
+          "tempo": "00:17:14"
+        },
+        {
+          "valor": "R$ 59,90",
+          "codigo": "116",
+          "cliente": "marcianmatos",
+          "suplente": "",
+          "tempo": "00:18:03"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "222",
+          "cliente": "karolina.marques_",
+          "suplente": "",
+          "tempo": "00:19:27"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "293",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:19:56"
+        },
+        {
+          "valor": "R$ 69,90",
+          "codigo": "027",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:21:24"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "250",
+          "cliente": "bonfanti.catia",
+          "suplente": "marciamf2024",
+          "tempo": "00:22:34"
+        },
+        {
+          "valor": "R$ 59,90",
+          "codigo": "140",
+          "cliente": "a.carmem1",
+          "suplente": "joycepigozzi",
+          "tempo": "00:23:35"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "036",
+          "cliente": "tati_lua_loro_lucca",
+          "suplente": "denise_bortolini",
+          "tempo": "00:25:54"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "052",
+          "cliente": "keila.guedes",
+          "suplente": "trichesmanoela",
+          "tempo": "00:26:32"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "204",
+          "cliente": "aaline_sf",
+          "suplente": "",
+          "tempo": "00:27:59"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "041",
+          "cliente": "marciamf2024",
+          "suplente": "trichesmanoela",
+          "tempo": "00:29:03"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "060",
+          "cliente": "lucianarequia",
+          "suplente": "denise_bortolini",
+          "tempo": "00:30:24"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "141",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:31:07"
+        },
+        {
+          "valor": "R$ 69,90",
+          "codigo": "168",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:32:33"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "195",
+          "cliente": "chimabyliz",
+          "suplente": "fofoca_amiga",
+          "tempo": "00:33:42"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "245",
+          "cliente": "chimabyliz",
+          "suplente": "catiapereiradias",
+          "tempo": "00:35:02"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "023",
+          "cliente": "rha_ventura",
+          "suplente": "sabrina.rosa1972",
+          "tempo": "00:35:48"
+        },
+        {
+          "valor": "R$ 69,90",
+          "codigo": "196",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:37:13"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "017",
+          "cliente": "darlise_santos",
+          "suplente": "eliete_diias",
+          "tempo": "00:38:43"
+        },
+        {
+          "valor": "R$ 139,90",
+          "codigo": "257",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:40:33"
+        },
+        {
+          "valor": "R$ 89,90",
+          "codigo": "076",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:41:24"
+        },
+        {
+          "valor": "R$ 99,90",
+          "codigo": "285",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:42:36"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "125",
+          "cliente": "denise_bortolini",
+          "suplente": "gabi.mazzon.pires",
+          "tempo": "00:43:07"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "065",
+          "cliente": "keila.guedes",
+          "suplente": "",
+          "tempo": "00:44:10"
+        },
+        {
+          "valor": "R$ 59,90",
+          "codigo": "172",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:45:19"
+        },
+        {
+          "valor": "R$ 119,90",
+          "codigo": "267",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:47:28"
+        },
+        {
+          "valor": "R$ 139,90",
+          "codigo": "053",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:47:59"
+        },
+        {
+          "valor": "R$ 59,90",
+          "codigo": "137",
+          "cliente": "keila.guedes",
+          "suplente": "marcicostas",
+          "tempo": "00:48:53"
+        }
+      ]
+    },
+    {
+      "id": "live_20260504_211650_03b0f5",
+      "started_at": "2026-05-04T21:16:50",
+      "finished_at": "2026-05-04T22:27:09",
+      "duration": "01:10:18",
+      "pieces_count": 53,
+      "sold_count": 41,
+      "clients_count": 28,
+      "clients": [
+        "aline_cristall",
+        "amordegonz",
+        "andressa.gelsdorf",
+        "andressa.marin.58",
+        "angelicagovoni",
+        "antonia_reiss",
+        "aquarela_decoracoes",
+        "bibigrigoletti",
+        "c.cassianaa",
+        "chahartmann",
+        "denise_bortolini",
+        "evodiamoreira",
+        "fabiolaantunes_",
+        "farinagislaine",
+        "fernandesdasilvajoice",
+        "fofoca_amiga",
+        "inauracaminha",
+        "ise.pedro",
+        "liliperin",
+        "marciamf2024",
+        "oessencialbrecho",
+        "raquelsi3r",
+        "rityelimartins",
+        "sandra.bressler",
+        "santossaleticia",
+        "sassaki_cris",
+        "silvana___silva",
+        "trichesmanoela"
+      ],
+      "total": "R$ 2.360,90",
+      "rows": [
+        {
+          "valor": "R$ 34,90",
+          "codigo": "",
+          "cliente": "marciamf2024",
+          "suplente": "",
+          "tempo": "00:00:29"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "fernandesdasilvajoice",
+          "suplente": "",
+          "tempo": "00:02:32"
+        },
+        {
+          "valor": "R$ 34,90",
+          "codigo": "",
+          "cliente": "fernandesdasilvajoice",
+          "suplente": "",
+          "tempo": "00:03:32"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:04:45"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:05:24"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "rityelimartins",
+          "suplente": "",
+          "tempo": "00:06:14"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "fabiolaantunes_",
+          "suplente": "aline_cristall / ise.pedro",
+          "tempo": "00:07:47"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "bibigrigoletti",
+          "suplente": "dai_nasciment0",
+          "tempo": "00:09:03"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "trichesmanoela",
+          "suplente": "rityelimartins / claudiakronhardt",
+          "tempo": "00:10:46"
+        },
+        {
+          "valor": "R$ 34,90",
+          "codigo": "",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:12:27"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "ise.pedro",
+          "suplente": "chimabyliz / lucianarequia",
+          "tempo": "00:14:05"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "bibigrigoletti",
+          "suplente": "",
+          "tempo": "00:14:48"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "denise_bortolini",
+          "suplente": "",
+          "tempo": "00:16:12"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "denise_bortolini",
+          "suplente": "sassaki_cris",
+          "tempo": "00:17:55"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "fernandesdasilvajoice",
+          "suplente": "ise.pedro",
+          "tempo": "00:18:41"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "andressa.gelsdorf",
+          "suplente": "rityelimartins",
+          "tempo": "00:19:50"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "fofoca_amiga",
+          "suplente": "",
+          "tempo": "00:20:44"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "rityelimartins",
+          "suplente": "",
+          "tempo": "00:22:17"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:22:44"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:23:26"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "chahartmann",
+          "suplente": "denise_bortolini / ise.pedro",
+          "tempo": "00:24:27"
+        },
+        {
+          "valor": "R$ 34,90",
+          "codigo": "",
+          "cliente": "farinagislaine",
+          "suplente": "chahartmann",
+          "tempo": "00:25:19"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "amordegonz",
+          "suplente": "",
+          "tempo": "00:26:46"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "sassaki_cris",
+          "suplente": "",
+          "tempo": "00:27:32"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "angelicagovoni",
+          "suplente": "liliperin",
+          "tempo": "00:29:16"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "liliperin",
+          "suplente": "denise_bortolini / chahartmann",
+          "tempo": "00:30:12"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "c.cassianaa",
+          "suplente": "gabi.mazzon.pires",
+          "tempo": "00:31:21"
+        },
+        {
+          "valor": "R$ 79,90",
+          "codigo": "",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:32:54"
+        },
+        {
+          "valor": "R$ 59,90",
+          "codigo": "",
+          "cliente": "aline_cristall",
+          "suplente": "vivianevieira_becker / chahartmann",
+          "tempo": "00:34:42"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:37:15"
+        },
+        {
+          "valor": "R$ 69,90",
+          "codigo": "",
+          "cliente": "evodiamoreira",
+          "suplente": "gabi.mazzon.pires",
+          "tempo": "00:38:21"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "aquarela_decoracoes",
+          "suplente": "chimabyliz",
+          "tempo": "00:39:50"
+        },
+        {
+          "valor": "R$ 69,90",
+          "codigo": "",
+          "cliente": "silvana___silva",
+          "suplente": "viviane.machado.7121",
+          "tempo": "00:40:48"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "sassaki_cris",
+          "suplente": "andressa.marin.58 / melissapenno",
+          "tempo": "00:43:15"
+        },
+        {
+          "valor": "R$ 59,90",
+          "codigo": "",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:44:03"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "raquelsi3r",
+          "suplente": "ise.pedro",
+          "tempo": "00:46:17"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "santossaleticia",
+          "suplente": "trichesmanoela / denise_bortolini",
+          "tempo": "00:47:41"
+        },
+        {
+          "valor": "R$ 59,90",
+          "codigo": "",
+          "cliente": "chahartmann",
+          "suplente": "ise.pedro",
+          "tempo": "00:48:40"
+        },
+        {
+          "valor": "R$ 34,90",
+          "codigo": "",
+          "cliente": "oessencialbrecho",
+          "suplente": "denise_bortolini / anacarla.oliveira.35",
+          "tempo": "00:51:03"
+        },
+        {
+          "valor": "R$ 49,90",
+          "codigo": "",
+          "cliente": "sandra.bressler",
+          "suplente": "",
+          "tempo": "00:52:37"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "andressa.marin.58",
+          "suplente": "chahartmann / aquarela_decoracoes",
+          "tempo": "00:53:20"
+        },
+        {
+          "valor": "R$ 39,90",
+          "codigo": "",
+          "cliente": "chahartmann",
+          "suplente": "",
+          "tempo": "00:54:06"
+        },
+        {
+          "valor": "R$ 69,90",
+          "codigo": "",
+          "cliente": "trichesmanoela",
+          "suplente": "mariananfossa / larehou",
+          "tempo": "00:55:04"
+        },
+        {
+          "valor": "R$ 139,90",
+          "codigo": "",
+          "cliente": "amordegonz",
+          "suplente": "",
+          "tempo": "00:56:04"
+        },
+        {
+          "valor": "R$ 59,90",
+          "codigo": "",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "00:57:30"
+        },
+        {
+          "valor": "R$ 29,90",
+          "codigo": "",
+          "cliente": "c.cassianaa",
+          "suplente": "",
+          "tempo": "00:58:15"
+        },
+        {
+          "valor": "R$ 69,90",
+          "codigo": "",
+          "cliente": "fernandesdasilvajoice",
+          "suplente": "fofoca_amiga",
+          "tempo": "00:59:51"
+        },
+        {
+          "valor": "R$ 69,90",
+          "codigo": "",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "01:01:34"
+        },
+        {
+          "valor": "R$ 179,90",
+          "codigo": "",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "01:03:08"
+        },
+        {
+          "valor": "R$ 369,90",
+          "codigo": "",
+          "cliente": "fofoca_amiga",
+          "suplente": "",
+          "tempo": "01:04:45"
+        },
+        {
+          "valor": "R$ 34,90",
+          "codigo": "",
+          "cliente": "antonia_reiss",
+          "suplente": "",
+          "tempo": "01:05:43"
+        },
+        {
+          "valor": "R$ 149,90",
+          "codigo": "",
+          "cliente": "",
+          "suplente": "",
+          "tempo": "01:06:21"
+        },
+        {
+          "valor": "R$ 89,90",
+          "codigo": "",
+          "cliente": "inauracaminha",
+          "suplente": "denise_bortolini / kelsevero",
+          "tempo": "01:09:03"
+        }
+      ]
+    }
+  ]
+}

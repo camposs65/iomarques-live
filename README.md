@@ -65,7 +65,7 @@ Os dados ficam salvos junto do executável:
 - `integracao_pendencias.json`: fila local com somente as lives e peças não vendidas que aguardam sincronização.
 - `integracao_sessao.dat`: sessão do Controle do Brechó protegida pelo Windows para o usuário atual.
 
-Esses arquivos não devem ir para Git/GitHub; eles são dados reais de operação da loja.
+Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-publicados/` guarda cópias das lives incluídas no repositório quando solicitado, com instruções de restauração e um inventário para conferir a integridade dos arquivos.
 
 ## Como usar durante a live
 

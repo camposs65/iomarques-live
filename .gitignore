@@ -35,6 +35,10 @@ integracao_pendencias.json
 !requirements.txt
 !assets/LEIA-ME-LOGO.txt
 
+# Copies of live data explicitly selected for publication.
+!/backups-publicados/**/
+!/backups-publicados/**/*.json
+
 # OS/editor files
 .DS_Store
 Thumbs.db
