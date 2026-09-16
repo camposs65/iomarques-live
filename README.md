@@ -116,7 +116,7 @@ Depois de finalizar:
 - `Imprimir todos`: envia o resumo, a planilha e as peças não vendidas para a impressora padrão, ignorando automaticamente os itens que não tiverem dados.
 - `Imprimir resumo`: envia um resumo por cliente com checkbox, nome da cliente em negrito, suplente na mesma linha da peça e totais finais. Quando não couber em uma folha, continua em páginas seguintes com fonte legível.
 - `Imprimir planilha`: imprime a planilha em A4, retrato, ajustada para caber em uma página.
-- `Imprimir não vendidas`: imprime apenas as peças preenchidas que ainda não têm cliente, também com checkbox.
+- `Imprimir não vendidas`: imprime apenas as peças preenchidas que ainda não têm cliente, com checkbox e o índice original da planilha principal (por exemplo, 3, 5 e 10), sem renumerar as peças. A opção `Imprimir todos` mantém a mesma numeração nesse relatório.
 - `Nova live / Limpar tudo`: guarda a planilha atual e abre outra vazia com o contador zerado. Não exclui o histórico ou os rascunhos do Supabase; exclusão definitiva é uma ação separada de administrador.
 
 ## Logo e ícone

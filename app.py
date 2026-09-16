@@ -3912,8 +3912,8 @@ class LiveSalesApp(tk.Tk):
     def print_unsold_pieces(self, show_success=True, show_empty=True):
         self._finish_active_cell()
         rows = [
-            row
-            for row in self._rows()
+            {**row, "peca": index}
+            for index, row in enumerate(self._rows(include_empty=True), start=1)
             if not row["cliente"].strip() and (row["valor"].strip() or row["codigo"].strip())
         ]
         if not rows:
@@ -3979,7 +3979,7 @@ class LiveSalesApp(tk.Tk):
         for index, row in enumerate(rows, start=1):
             lines.append(
                 f"{cell(CHECKBOX_TEXT, widths['check'])} "
-                f"{cell(index, widths['peca'], 'right')} "
+                f"{cell(row.get('peca', index), widths['peca'], 'right')} "
                 f"{cell(row['valor'], widths['valor'])} "
                 f"{cell(row['codigo'], widths['codigo'])} "
                 f"{cell(row['cliente'], widths['cliente'])} "
