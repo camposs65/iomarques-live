@@ -1,5 +1,7 @@
 import json
+import math
 import os
+import random
 import subprocess
 import sys
 import tempfile
@@ -23,6 +25,8 @@ try:
     from openpyxl.utils import get_column_letter
 except ImportError:
     Workbook = None
+
+from roguelike_game import RogueBrechoGame
 
 
 COLUMNS = ("valor", "codigo", "cliente", "suplente", "tempo")
@@ -667,6 +671,12 @@ class LiveSalesApp(tk.Tk):
     def _build_final_action_buttons(self, parent):
         self._build_actions_menu(parent).pack(side="left", padx=(0, 8))
         self._build_prints_menu(parent).pack(side="left", padx=(0, 8))
+        ttk.Button(parent, text="Jogo", command=self.show_memory_game, style="Secondary.TButton").pack(
+            side="left", padx=(0, 8)
+        )
+        ttk.Button(parent, text="Aventura", command=self.show_roguelike_game, style="Secondary.TButton").pack(
+            side="left", padx=(0, 8)
+        )
         ttk.Button(parent, text="Nova live / Limpar tudo", command=self.clear_all, style="Secondary.TButton").pack(
             side="left"
         )
@@ -747,6 +757,748 @@ class LiveSalesApp(tk.Tk):
         menu.add_command(label="Imprimir Avaliações", command=self.print_evaluation_pages)
         button.configure(menu=menu)
         return container
+
+    def show_roguelike_game(self):
+        RogueBrechoGame(self, COLORS)
+
+    def show_memory_game(self):
+        window = tk.Toplevel(self)
+        window.title("Jogo da memória - IoMarques Brechó")
+        window.geometry("520x620")
+        window.minsize(460, 560)
+        window.configure(bg=COLORS["app_bg"])
+        window.transient(self)
+
+        state = {
+            "cards": [],
+            "buttons": [],
+            "revealed": [],
+            "matched": set(),
+            "moves": 0,
+            "started_at": None,
+            "timer_job": None,
+            "locked": False,
+        }
+
+        top = tk.Frame(window, bg=COLORS["primary"])
+        top.pack(fill="x")
+        tk.Label(
+            top,
+            text="Jogo da memória",
+            bg=COLORS["primary"],
+            fg="#FFFFFF",
+            font=("Segoe UI Semibold", 18),
+        ).pack(anchor="w", padx=18, pady=(14, 2))
+        tk.Label(
+            top,
+            text="IoMarques Brechó",
+            bg=COLORS["primary"],
+            fg=COLORS["app_bg"],
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", padx=18, pady=(0, 14))
+
+        stats = tk.Frame(window, bg=COLORS["app_bg"])
+        stats.pack(fill="x", padx=18, pady=(16, 10))
+
+        moves_var = tk.StringVar(value="Jogadas: 0")
+        pairs_var = tk.StringVar(value="Pares: 0/8")
+        time_var = tk.StringVar(value="Tempo: 00:00")
+        status_var = tk.StringVar(value="")
+
+        for text_var in (moves_var, pairs_var, time_var):
+            tk.Label(
+                stats,
+                textvariable=text_var,
+                bg=COLORS["timer_bg"],
+                fg=COLORS["text"],
+                font=("Segoe UI Semibold", 10),
+                padx=12,
+                pady=6,
+            ).pack(side="left", padx=(0, 8))
+
+        ttk.Button(stats, text="Reiniciar", command=lambda: reset_game(), style="Secondary.TButton").pack(side="right")
+
+        board = tk.Frame(window, bg=COLORS["grid"], bd=1)
+        board.pack(fill="both", expand=True, padx=18, pady=(0, 12))
+        for row in range(4):
+            board.grid_rowconfigure(row, weight=1, uniform="memory_rows")
+        for col in range(4):
+            board.grid_columnconfigure(col, weight=1, uniform="memory_cols")
+
+        status = tk.Label(
+            window,
+            textvariable=status_var,
+            bg=COLORS["app_bg"],
+            fg=COLORS["button_text"],
+            font=("Segoe UI Semibold", 10),
+        )
+        status.pack(fill="x", padx=18, pady=(0, 14))
+
+        def format_elapsed():
+            if state["started_at"] is None:
+                return "00:00"
+            elapsed = max(0, int((datetime.now() - state["started_at"]).total_seconds()))
+            minutes, seconds = divmod(elapsed, 60)
+            return f"{minutes:02d}:{seconds:02d}"
+
+        def update_timer():
+            if not window.winfo_exists():
+                return
+            time_var.set(f"Tempo: {format_elapsed()}")
+            state["timer_job"] = window.after(500, update_timer)
+
+        def hidden_style(button):
+            button.configure(
+                text="?",
+                state="normal",
+                bg=COLORS["primary"],
+                fg="#FFFFFF",
+                activebackground="#6C366B",
+                activeforeground="#FFFFFF",
+                relief="flat",
+            )
+
+        def reveal_style(button, label):
+            button.configure(
+                text=label,
+                state="normal",
+                bg="#FFFFFF",
+                fg=COLORS["primary"],
+                activebackground="#FFFFFF",
+                activeforeground=COLORS["primary"],
+                relief="solid",
+            )
+
+        def matched_style(button, label):
+            button.configure(
+                text=label,
+                state="disabled",
+                bg=COLORS["sold_row"],
+                fg=COLORS["text"],
+                disabledforeground=COLORS["text"],
+                relief="solid",
+            )
+
+        def refresh_stats():
+            moves_var.set(f"Jogadas: {state['moves']}")
+            pairs_var.set(f"Pares: {len(state['matched']) // 2}/8")
+
+        def finish_game():
+            if state["timer_job"] is not None:
+                window.after_cancel(state["timer_job"])
+                state["timer_job"] = None
+            status_var.set(f"Completo em {format_elapsed()} com {state['moves']} jogadas.")
+
+        def hide_unmatched(first, second):
+            if not window.winfo_exists():
+                return
+            if first not in state["matched"]:
+                hidden_style(state["buttons"][first])
+            if second not in state["matched"]:
+                hidden_style(state["buttons"][second])
+            state["revealed"].clear()
+            state["locked"] = False
+
+        def on_card_click(index):
+            if state["locked"] or index in state["matched"] or index in state["revealed"]:
+                return
+
+            if state["started_at"] is None:
+                state["started_at"] = datetime.now()
+            status_var.set("")
+
+            reveal_style(state["buttons"][index], state["cards"][index])
+            state["revealed"].append(index)
+
+            if len(state["revealed"]) < 2:
+                return
+
+            state["moves"] += 1
+            refresh_stats()
+            first, second = state["revealed"]
+            if state["cards"][first] == state["cards"][second]:
+                state["matched"].update((first, second))
+                matched_style(state["buttons"][first], state["cards"][first])
+                matched_style(state["buttons"][second], state["cards"][second])
+                state["revealed"].clear()
+                refresh_stats()
+                if len(state["matched"]) == len(state["cards"]):
+                    finish_game()
+                return
+
+            state["locked"] = True
+            window.after(700, lambda: hide_unmatched(first, second))
+
+        def reset_game():
+            if state["timer_job"] is not None:
+                window.after_cancel(state["timer_job"])
+                state["timer_job"] = None
+
+            for child in board.winfo_children():
+                child.destroy()
+
+            labels = ["PIX", "LIVE", "BRECHÓ", "LOOK", "CAIXA", "VALOR", "FOTO", "ENVIO"]
+            cards = labels * 2
+            random.shuffle(cards)
+
+            state["cards"] = cards
+            state["buttons"] = []
+            state["revealed"] = []
+            state["matched"] = set()
+            state["moves"] = 0
+            state["started_at"] = None
+            state["locked"] = False
+            status_var.set("")
+            refresh_stats()
+            time_var.set("Tempo: 00:00")
+
+            for index, _label in enumerate(cards):
+                row, col = divmod(index, 4)
+                card = tk.Button(
+                    board,
+                    text="?",
+                    command=lambda card_index=index: on_card_click(card_index),
+                    font=("Segoe UI Semibold", 15),
+                    width=8,
+                    height=4,
+                    cursor="hand2",
+                    bd=0,
+                    highlightthickness=1,
+                    highlightbackground=COLORS["grid"],
+                )
+                hidden_style(card)
+                card.grid(row=row, column=col, sticky="nsew", padx=4, pady=4)
+                state["buttons"].append(card)
+
+            state["timer_job"] = window.after(500, update_timer)
+
+        def on_close():
+            if state["timer_job"] is not None:
+                window.after_cancel(state["timer_job"])
+            window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", on_close)
+        reset_game()
+
+    def show_story_adventure(self):
+        window = tk.Toplevel(self)
+        window.title("Aventura da Peça 777 - IoMarques Brechó")
+        window.geometry("900x700")
+        window.minsize(820, 640)
+        window.configure(bg=COLORS["app_bg"])
+        window.transient(self)
+
+        canvas_width = 840
+        canvas_height = 540
+        player_radius = 16
+        keys = set()
+        loop_job = {"id": None}
+
+        chapters = [
+            {
+                "title": "Capítulo 1 - Depois da Live",
+                "story": [
+                    "A live acabou, as luzes do brechó piscaram e uma peça sumiu do estoque.",
+                    "Dudu encontrou uma pista: etiquetas brilhantes apontam o caminho até a Peça 777.",
+                    "Colete as 4 etiquetas de luz e atravesse o portal no fundo da sala.",
+                ],
+                "start": (88, 448),
+                "goal": "Colete 4 etiquetas de luz",
+                "items": [
+                    (176, 126, "TAG", "#FFD166"),
+                    (418, 96, "LUZ", "#F9A8D4"),
+                    (668, 196, "IO", "#A7F3D0"),
+                    (324, 418, "777", "#93C5FD"),
+                ],
+                "walls": [(250, 170, 586, 200), (126, 312, 432, 342), (586, 328, 710, 358)],
+                "enemies": [
+                    {"x": 636, "y": 102, "vx": 2.2, "vy": 1.4, "r": 18},
+                    {"x": 522, "y": 426, "vx": -1.7, "vy": 1.8, "r": 17},
+                ],
+                "exit": (738, 414, 806, 498),
+            },
+            {
+                "title": "Capítulo 2 - Corredor dos Looks",
+                "story": [
+                    "O portal abre para um corredor onde cada arara guarda uma lembrança de live.",
+                    "As sombras tentam bagunçar os cabides. Passe por elas e recupere os looks perdidos.",
+                    "Com 5 looks coletados, o caminho para o estoque secreto aparece.",
+                ],
+                "start": (80, 90),
+                "goal": "Colete 5 looks perdidos",
+                "items": [
+                    (216, 86, "LOOK", "#FDE68A"),
+                    (516, 92, "FIT", "#C4B5FD"),
+                    (710, 252, "TOP", "#F9A8D4"),
+                    (206, 404, "SAIA", "#A7F3D0"),
+                    (518, 450, "BAG", "#93C5FD"),
+                ],
+                "walls": [
+                    (142, 168, 244, 374),
+                    (342, 52, 372, 276),
+                    (492, 266, 708, 296),
+                    (612, 354, 642, 514),
+                ],
+                "enemies": [
+                    {"x": 422, "y": 150, "vx": 2.4, "vy": 0.9, "r": 18},
+                    {"x": 724, "y": 110, "vx": -2.1, "vy": 1.8, "r": 17},
+                    {"x": 310, "y": 462, "vx": 1.8, "vy": -2.0, "r": 17},
+                ],
+                "exit": (742, 36, 812, 118),
+            },
+            {
+                "title": "Capítulo 3 - Estoque Secreto",
+                "story": [
+                    "Atrás da última arara existe uma sala que só abre para quem sabe garimpar.",
+                    "A Peça 777 está no centro do estoque. Pegue-a e fuja pelo portal antes que as sombras fechem a loja.",
+                    "Dica: movimentos curtos ajudam a passar entre as vitrines.",
+                ],
+                "start": (78, 462),
+                "goal": "Pegue a Peça 777",
+                "items": [
+                    (420, 264, "PEÇA 777", "#FFD166"),
+                    (184, 120, "CHAVE", "#A7F3D0"),
+                    (702, 408, "LUZ", "#F9A8D4"),
+                ],
+                "walls": [
+                    (152, 194, 312, 224),
+                    (402, 74, 432, 250),
+                    (402, 330, 432, 510),
+                    (542, 194, 706, 224),
+                    (152, 326, 312, 356),
+                    (542, 326, 706, 356),
+                ],
+                "enemies": [
+                    {"x": 308, "y": 94, "vx": 2.3, "vy": 1.7, "r": 18},
+                    {"x": 626, "y": 114, "vx": -1.8, "vy": 2.2, "r": 18},
+                    {"x": 286, "y": 450, "vx": 1.9, "vy": -2.0, "r": 18},
+                    {"x": 642, "y": 448, "vx": -2.2, "vy": -1.7, "r": 18},
+                ],
+                "exit": (742, 234, 812, 318),
+            },
+        ]
+
+        state = {
+            "chapter": 0,
+            "player_x": 80,
+            "player_y": 440,
+            "items": [],
+            "walls": [],
+            "enemies": [],
+            "particles": [],
+            "matched": 0,
+            "lives": 3,
+            "tick": 0,
+            "story_index": 0,
+            "story_mode": True,
+            "paused": False,
+            "game_over": False,
+            "victory": False,
+            "invulnerable": 0,
+        }
+
+        top = tk.Frame(window, bg=COLORS["primary"])
+        top.pack(fill="x")
+        tk.Label(
+            top,
+            text="Aventura da Peça 777",
+            bg=COLORS["primary"],
+            fg="#FFFFFF",
+            font=("Segoe UI Semibold", 20),
+        ).pack(anchor="w", padx=18, pady=(14, 2))
+        tk.Label(
+            top,
+            text="Setas/WASD para mover, Espaço para avançar a história, P para pausar",
+            bg=COLORS["primary"],
+            fg=COLORS["app_bg"],
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", padx=18, pady=(0, 14))
+
+        hud = tk.Frame(window, bg=COLORS["app_bg"])
+        hud.pack(fill="x", padx=18, pady=(14, 10))
+        chapter_var = tk.StringVar()
+        objective_var = tk.StringVar()
+        lives_var = tk.StringVar()
+        for variable in (chapter_var, objective_var, lives_var):
+            tk.Label(
+                hud,
+                textvariable=variable,
+                bg=COLORS["timer_bg"],
+                fg=COLORS["text"],
+                font=("Segoe UI Semibold", 10),
+                padx=12,
+                pady=6,
+            ).pack(side="left", padx=(0, 8))
+
+        ttk.Button(hud, text="Recomeçar", command=lambda: reset_adventure(), style="Secondary.TButton").pack(
+            side="right"
+        )
+
+        canvas = tk.Canvas(
+            window,
+            width=canvas_width,
+            height=canvas_height,
+            bg="#1C1424",
+            highlightthickness=0,
+            bd=0,
+        )
+        canvas.pack(fill="both", expand=True, padx=18, pady=(0, 18))
+        canvas.focus_set()
+
+        def blend(start, end, amount):
+            start = start.lstrip("#")
+            end = end.lstrip("#")
+            values = []
+            for index in range(0, 6, 2):
+                a = int(start[index:index + 2], 16)
+                b = int(end[index:index + 2], 16)
+                values.append(int(a + (b - a) * amount))
+            return "#" + "".join(f"{value:02x}" for value in values)
+
+        def chapter():
+            return chapters[state["chapter"]]
+
+        def found_count():
+            return sum(1 for item in state["items"] if item["found"])
+
+        def exit_open():
+            return found_count() >= len(state["items"])
+
+        def player_rect_at(x, y):
+            return (x - player_radius, y - player_radius, x + player_radius, y + player_radius)
+
+        def rects_intersect(first, second):
+            return not (
+                first[2] < second[0]
+                or first[0] > second[2]
+                or first[3] < second[1]
+                or first[1] > second[3]
+            )
+
+        def circle_hits_wall(x, y, radius):
+            probe = (x - radius, y - radius, x + radius, y + radius)
+            return any(rects_intersect(probe, wall) for wall in state["walls"])
+
+        def refresh_hud():
+            current = chapter()
+            chapter_var.set(current["title"])
+            objective_var.set(f"{current['goal']} - {found_count()}/{len(state['items'])}")
+            lives_var.set(f"Vidas: {state['lives']}")
+
+        def add_particles(x, y, color, amount=16):
+            for _index in range(amount):
+                angle = random.uniform(0, math.tau)
+                speed = random.uniform(1.2, 4.2)
+                state["particles"].append(
+                    {
+                        "x": x,
+                        "y": y,
+                        "vx": math.cos(angle) * speed,
+                        "vy": math.sin(angle) * speed,
+                        "life": random.randint(18, 34),
+                        "color": color,
+                    }
+                )
+
+        def build_level(index):
+            current = chapters[index]
+            state["chapter"] = index
+            state["player_x"], state["player_y"] = current["start"]
+            state["items"] = [
+                {"x": x, "y": y, "label": label, "color": color, "found": False}
+                for x, y, label, color in current["items"]
+            ]
+            state["walls"] = list(current["walls"])
+            state["enemies"] = [enemy.copy() for enemy in current["enemies"]]
+            state["particles"] = []
+            state["story_index"] = 0
+            state["story_mode"] = True
+            state["paused"] = False
+            state["game_over"] = False
+            state["victory"] = False
+            state["invulnerable"] = 50
+            refresh_hud()
+            canvas.focus_set()
+
+        def reset_adventure():
+            state["lives"] = 3
+            state["tick"] = 0
+            build_level(0)
+
+        def damage_player():
+            if state["invulnerable"] > 0 or state["game_over"] or state["victory"]:
+                return
+            state["lives"] -= 1
+            add_particles(state["player_x"], state["player_y"], "#FCA5A5", amount=24)
+            if state["lives"] <= 0:
+                state["game_over"] = True
+                state["story_mode"] = True
+            else:
+                state["player_x"], state["player_y"] = chapter()["start"]
+                state["invulnerable"] = 70
+            refresh_hud()
+
+        def advance_story():
+            if state["game_over"] or state["victory"]:
+                reset_adventure()
+                return
+            if not state["story_mode"]:
+                return
+            state["story_index"] += 1
+            if state["story_index"] >= len(chapter()["story"]):
+                state["story_mode"] = False
+            canvas.focus_set()
+
+        def complete_level():
+            add_particles(state["player_x"], state["player_y"], "#A7F3D0", amount=34)
+            if state["chapter"] >= len(chapters) - 1:
+                state["victory"] = True
+                state["story_mode"] = True
+                return
+            build_level(state["chapter"] + 1)
+
+        def update_world():
+            speed = 4.4
+            dx = 0
+            dy = 0
+            if keys.intersection({"left", "a"}):
+                dx -= speed
+            if keys.intersection({"right", "d"}):
+                dx += speed
+            if keys.intersection({"up", "w"}):
+                dy -= speed
+            if keys.intersection({"down", "s"}):
+                dy += speed
+
+            if dx and dy:
+                dx *= 0.72
+                dy *= 0.72
+
+            next_x = max(player_radius, min(canvas_width - player_radius, state["player_x"] + dx))
+            if not circle_hits_wall(next_x, state["player_y"], player_radius):
+                state["player_x"] = next_x
+            next_y = max(player_radius, min(canvas_height - player_radius, state["player_y"] + dy))
+            if not circle_hits_wall(state["player_x"], next_y, player_radius):
+                state["player_y"] = next_y
+
+            if state["invulnerable"] > 0:
+                state["invulnerable"] -= 1
+
+            for enemy in state["enemies"]:
+                for axis in ("x", "y"):
+                    enemy[axis] += enemy["v" + axis]
+                    hit_bounds = (
+                        enemy[axis] < enemy["r"]
+                        or enemy[axis] > (canvas_width if axis == "x" else canvas_height) - enemy["r"]
+                    )
+                    if hit_bounds or circle_hits_wall(enemy["x"], enemy["y"], enemy["r"]):
+                        enemy[axis] -= enemy["v" + axis]
+                        enemy["v" + axis] *= -1
+
+                if math.hypot(state["player_x"] - enemy["x"], state["player_y"] - enemy["y"]) < player_radius + enemy["r"]:
+                    damage_player()
+
+            for item in state["items"]:
+                if item["found"]:
+                    continue
+                if math.hypot(state["player_x"] - item["x"], state["player_y"] - item["y"]) < 28:
+                    item["found"] = True
+                    add_particles(item["x"], item["y"], item["color"])
+                    refresh_hud()
+
+            if exit_open():
+                exit_rect = chapter()["exit"]
+                if rects_intersect(player_rect_at(state["player_x"], state["player_y"]), exit_rect):
+                    complete_level()
+
+            for particle in list(state["particles"]):
+                particle["x"] += particle["vx"]
+                particle["y"] += particle["vy"]
+                particle["vy"] += 0.08
+                particle["life"] -= 1
+                if particle["life"] <= 0:
+                    state["particles"].remove(particle)
+
+        def draw_background():
+            canvas.delete("all")
+            for index in range(28):
+                amount = index / 27
+                canvas.create_rectangle(
+                    0,
+                    index * canvas_height / 28,
+                    canvas_width,
+                    (index + 1) * canvas_height / 28 + 1,
+                    fill=blend("#1A1024", "#4C2450", amount),
+                    outline="",
+                )
+
+            for index in range(34):
+                x = (index * 97 + state["tick"] * 0.7) % (canvas_width + 80) - 40
+                y = 36 + (index * 53) % (canvas_height - 92)
+                radius = 1 + (index % 3)
+                color = "#F9D8F9" if index % 2 else "#D7FBE8"
+                canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill=color, outline="")
+
+            for x in range(0, canvas_width, 56):
+                canvas.create_line(x, 0, x - 90, canvas_height, fill="#2C1B35", width=1)
+            for y in range(36, canvas_height, 56):
+                canvas.create_line(0, y, canvas_width, y + 40, fill="#2C1B35", width=1)
+
+        def draw_exit():
+            x1, y1, x2, y2 = chapter()["exit"]
+            pulse = 8 + math.sin(state["tick"] * 0.12) * 4
+            color = "#A7F3D0" if exit_open() else "#6B5A70"
+            glow = "#D9FBE7" if exit_open() else "#2E2235"
+            canvas.create_oval(x1 - pulse, y1 - pulse, x2 + pulse, y2 + pulse, fill=glow, outline="")
+            canvas.create_rectangle(x1, y1, x2, y2, fill=color, outline="#FFFFFF", width=2)
+            label = "PORTAL" if exit_open() else "FECHADO"
+            canvas.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=label, fill=COLORS["text"], font=("Segoe UI Semibold", 10))
+
+        def draw_walls():
+            for x1, y1, x2, y2 in state["walls"]:
+                canvas.create_rectangle(x1 + 6, y1 + 8, x2 + 6, y2 + 8, fill="#150E1E", outline="")
+                canvas.create_rectangle(x1, y1, x2, y2, fill="#6C366B", outline="#D8B6D8", width=2)
+                canvas.create_line(x1 + 8, y1 + 8, x2 - 8, y1 + 8, fill="#B98ABC", width=1)
+
+        def draw_items():
+            for item in state["items"]:
+                if item["found"]:
+                    continue
+                pulse = 1 + math.sin(state["tick"] * 0.16 + item["x"]) * 0.12
+                radius = 20 * pulse
+                x = item["x"]
+                y = item["y"]
+                canvas.create_oval(x - radius * 1.6, y - radius * 1.6, x + radius * 1.6, y + radius * 1.6, fill="#4A2A57", outline="")
+                canvas.create_polygon(
+                    x,
+                    y - radius,
+                    x + radius,
+                    y,
+                    x,
+                    y + radius,
+                    x - radius,
+                    y,
+                    fill=item["color"],
+                    outline="#FFFFFF",
+                    width=2,
+                )
+                canvas.create_text(x, y + 34, text=item["label"], fill="#FFFFFF", font=("Segoe UI Semibold", 9))
+
+        def draw_enemies():
+            for enemy in state["enemies"]:
+                x = enemy["x"]
+                y = enemy["y"]
+                r = enemy["r"] + math.sin(state["tick"] * 0.18 + x) * 2
+                canvas.create_oval(x - r + 5, y - r + 8, x + r + 5, y + r + 8, fill="#130C18", outline="")
+                canvas.create_oval(x - r, y - r, x + r, y + r, fill="#2B1934", outline="#B65AC0", width=2)
+                canvas.create_oval(x - 7, y - 4, x - 2, y + 2, fill="#FDE68A", outline="")
+                canvas.create_oval(x + 2, y - 4, x + 7, y + 2, fill="#FDE68A", outline="")
+                canvas.create_arc(x - r, y - r, x + r, y + r, start=205, extent=130, outline="#F9A8D4", width=2, style="arc")
+
+        def draw_player():
+            x = state["player_x"]
+            y = state["player_y"]
+            alpha_flash = state["invulnerable"] > 0 and state["tick"] % 8 < 4
+            body = "#FFFFFF" if alpha_flash else "#F9F0F5"
+            canvas.create_oval(x - 16 + 5, y - 16 + 8, x + 16 + 5, y + 16 + 8, fill="#120B18", outline="")
+            canvas.create_oval(x - 16, y - 16, x + 16, y + 16, fill=body, outline=COLORS["primary"], width=3)
+            canvas.create_polygon(x - 10, y - 4, x + 12, y - 12, x + 8, y + 7, fill="#F9A8D4", outline=COLORS["primary"])
+            canvas.create_oval(x - 6, y - 5, x - 2, y - 1, fill=COLORS["text"], outline="")
+            canvas.create_oval(x + 4, y - 5, x + 8, y - 1, fill=COLORS["text"], outline="")
+
+        def draw_particles():
+            for particle in state["particles"]:
+                size = max(1, particle["life"] // 8)
+                canvas.create_oval(
+                    particle["x"] - size,
+                    particle["y"] - size,
+                    particle["x"] + size,
+                    particle["y"] + size,
+                    fill=particle["color"],
+                    outline="",
+                )
+
+        def story_text():
+            if state["victory"]:
+                return (
+                    "Final - A Peça 777 voltou para a arara principal.",
+                    "A loja acendeu inteira, as sombras sumiram e o brechó ficou pronto para a próxima live. Pressione Espaço para jogar novamente.",
+                )
+            if state["game_over"]:
+                return (
+                    "As luzes apagaram",
+                    "As sombras fecharam o estoque antes de você encontrar a Peça 777. Pressione Espaço para tentar outra vez.",
+                )
+            current_story = chapter()["story"]
+            index = min(state["story_index"], len(current_story) - 1)
+            return (chapter()["title"], current_story[index])
+
+        def draw_story_overlay():
+            if not state["story_mode"] and not state["paused"]:
+                return
+            title, text = ("Pausado", "Pressione P para voltar ao jogo.") if state["paused"] else story_text()
+            canvas.create_rectangle(42, canvas_height - 172, canvas_width - 42, canvas_height - 34, fill="#FFF7FF", outline=COLORS["primary"], width=3)
+            canvas.create_text(70, canvas_height - 142, anchor="w", text=title, fill=COLORS["primary"], font=("Segoe UI Semibold", 14))
+            canvas.create_text(
+                70,
+                canvas_height - 108,
+                anchor="nw",
+                text=text,
+                width=canvas_width - 140,
+                fill=COLORS["text"],
+                font=("Segoe UI", 11),
+            )
+            hint = "Espaço para continuar" if not state["paused"] else "P para continuar"
+            canvas.create_text(canvas_width - 70, canvas_height - 56, anchor="e", text=hint, fill=COLORS["button_text"], font=("Segoe UI Semibold", 10))
+
+        def render():
+            draw_background()
+            draw_exit()
+            draw_walls()
+            draw_items()
+            draw_enemies()
+            draw_particles()
+            draw_player()
+            draw_story_overlay()
+
+        def game_loop():
+            if not window.winfo_exists():
+                return
+            state["tick"] += 1
+            if not state["paused"] and not state["story_mode"] and not state["game_over"] and not state["victory"]:
+                update_world()
+            render()
+            loop_job["id"] = window.after(30, game_loop)
+
+        def on_key_press(event):
+            key = event.keysym.lower()
+            if key in {"space", "return"}:
+                advance_story()
+                return
+            if key == "p":
+                if not state["story_mode"] and not state["game_over"] and not state["victory"]:
+                    state["paused"] = not state["paused"]
+                return
+            if key == "r":
+                reset_adventure()
+                return
+            keys.add(key)
+
+        def on_key_release(event):
+            keys.discard(event.keysym.lower())
+
+        def on_close():
+            if loop_job["id"] is not None:
+                window.after_cancel(loop_job["id"])
+            window.destroy()
+
+        window.bind("<KeyPress>", on_key_press)
+        window.bind("<KeyRelease>", on_key_release)
+        canvas.bind("<Button-1>", lambda _event: canvas.focus_set())
+        window.protocol("WM_DELETE_WINDOW", on_close)
+        reset_adventure()
+        game_loop()
+        window.after(100, canvas.focus_set)
 
     def _build_table_header(self):
         self.filter_buttons = []
@@ -1740,6 +2492,44 @@ class LiveSalesApp(tk.Tk):
                 self.sync_manager.queue_delete(live_id)
         return saved
 
+    def _history_commission_amount(self, live):
+        total = self._parse_money(str(live.get("total", "0") if isinstance(live, dict) else "0"))
+        return (total * Decimal("0.10")).quantize(Decimal("0.01"))
+
+    def _history_commission_value(self, live):
+        return self._format_money(self._history_commission_amount(live))
+
+    def _history_month_groups(self, lives):
+        month_names = (
+            "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+            "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+        )
+        dated_lives = [
+            (
+                self._parse_history_datetime(live.get("finished_at"))
+                or self._parse_history_datetime(live.get("started_at")),
+                live,
+            )
+            for live in lives
+        ]
+        dated_lives.sort(key=lambda item: item[0].isoformat() if item[0] else "", reverse=True)
+        groups = {}
+        for date, live in dated_lives:
+            key = (date.year, date.month) if date else (0, 0)
+            if key not in groups:
+                groups[key] = {
+                    "key": key,
+                    "label": f"{month_names[date.month - 1]} de {date.year}" if date else "Sem data",
+                    "lives": [],
+                    "total": Decimal("0"),
+                    "commission": Decimal("0"),
+                }
+            group = groups[key]
+            group["lives"].append(live)
+            group["total"] += self._parse_money(str(live.get("total", "0")))
+            group["commission"] += self._history_commission_amount(live)
+        return [groups[key] for key in sorted(groups, reverse=True)]
+
     def _current_live_stats(self):
         rows = self._rows()
         presented_rows = [row for row in rows if row["valor"].strip() or row["codigo"].strip()]
@@ -1807,7 +2597,8 @@ class LiveSalesApp(tk.Tk):
         lives = self._read_history()
         window = tk.Toplevel(self)
         window.title("Histórico de lives - IoMarques Brechó")
-        window.geometry("900x520")
+        window.geometry("1000x520")
+        window.minsize(780, 360)
         window.configure(bg=COLORS["app_bg"])
 
         top = tk.Frame(window, bg=COLORS["primary"])
@@ -1820,27 +2611,47 @@ class LiveSalesApp(tk.Tk):
             font=("Segoe UI Semibold", 17),
         ).pack(side="left", padx=18, pady=12)
 
-        columns = ("finished_at", "duration", "pieces_count", "sold_count", "clients_count", "total")
+        columns = ("duration", "pieces_count", "sold_count", "clients_count", "total", "commission")
         headings = {
-            "finished_at": "Finalizada em",
             "duration": "Duração",
             "pieces_count": "Peças",
             "sold_count": "Vendidas",
             "clients_count": "Clientes",
-            "total": "Total",
+            "total": "Total vendido",
+            "commission": "10%",
         }
-        tree = ttk.Treeview(window, columns=columns, show="headings", selectmode="browse")
-        tree.pack(fill="both", expand=True, padx=18, pady=18)
+        table = tk.Frame(window, bg=COLORS["app_bg"])
+        table.pack(fill="both", expand=True, padx=18, pady=18)
+        table.rowconfigure(0, weight=1)
+        table.columnconfigure(0, weight=1)
+        tree = ttk.Treeview(table, columns=columns, show="tree headings", selectmode="browse")
+        tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(table, orient="vertical", command=tree.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        horizontal_scrollbar = ttk.Scrollbar(table, orient="horizontal", command=tree.xview)
+        horizontal_scrollbar.grid(row=1, column=0, sticky="ew")
+        tree.configure(yscrollcommand=scrollbar.set, xscrollcommand=horizontal_scrollbar.set)
+        tree.heading("#0", text="Mês / Finalizada em", anchor="w")
+        tree.column("#0", width=275, minwidth=250, anchor="w")
+        tree.tag_configure(
+            "month",
+            background=COLORS["secondary"],
+            foreground=COLORS["text"],
+            font=("Segoe UI", 10, "bold"),
+        )
 
         for column in columns:
             tree.heading(column, text=headings[column])
-            tree.column(column, width=130, anchor="w")
+            tree.column(column, width=75, minwidth=65, anchor="center")
+        tree.column("duration", width=105, minwidth=85)
+        tree.column("total", width=150, minwidth=130, anchor="e")
+        tree.column("commission", width=140, minwidth=120, anchor="e")
 
         actions = tk.Frame(window, bg=COLORS["app_bg"])
         actions.pack(fill="x", padx=18, pady=(0, 18))
 
         empty = tk.Label(
-            window,
+            table,
             text="Nenhuma live finalizada ainda.",
             bg=COLORS["app_bg"],
             fg=COLORS["text"],
@@ -1855,33 +2666,57 @@ class LiveSalesApp(tk.Tk):
                 return None
             return item_to_live.get(selection[0])
 
+        def refresh_actions(_event=None):
+            state = "!disabled" if selected_live() is not None else "disabled"
+            open_button.state([state])
+            delete_button.state([state])
+
         def refresh_empty_state():
             if lives:
                 empty.place_forget()
-                delete_button.state(["!disabled"])
             else:
-                empty.place(relx=0.5, rely=0.55, anchor="center")
-                delete_button.state(["disabled"])
+                empty.place(relx=0.5, rely=0.5, anchor="center")
+            refresh_actions()
 
         def populate_history():
-            tree.delete(*tree.get_children())
+            expanded = {item: tree.item(item, "open") for item in tree.get_children()}
+            if expanded:
+                tree.delete(*expanded)
             item_to_live.clear()
-            for index, live in enumerate(lives):
-                item_id = f"history_{index}"
-                item_to_live[item_id] = live
+            for group in self._history_month_groups(lives):
+                year, month = group["key"]
+                month_id = f"month_{year}_{month}"
+                count = len(group["lives"])
                 tree.insert(
                     "",
                     "end",
-                    iid=item_id,
+                    iid=month_id,
+                    text=f"{group['label']} ({count} {'live' if count == 1 else 'lives'})",
+                    open=expanded.get(month_id, True),
+                    tags=("month",),
                     values=(
-                        self._format_history_datetime(live.get("finished_at", "")),
-                        live.get("duration", ""),
-                        live.get("pieces_count", 0),
-                        live.get("sold_count", 0),
-                        live.get("clients_count", 0),
-                        live.get("total", "R$ 0,00"),
+                        "", "", "", "",
+                        self._format_money(group["total"]),
+                        self._format_money(group["commission"]),
                     ),
                 )
+                for index, live in enumerate(group["lives"]):
+                    item_id = f"{month_id}_live_{index}"
+                    item_to_live[item_id] = live
+                    tree.insert(
+                        month_id,
+                        "end",
+                        iid=item_id,
+                        text=self._format_history_datetime(live.get("finished_at", "")) or "Sem data",
+                        values=(
+                            live.get("duration", ""),
+                            live.get("pieces_count", 0),
+                            live.get("sold_count", 0),
+                            live.get("clients_count", 0),
+                            live.get("total", "R$ 0,00"),
+                            self._history_commission_value(live),
+                        ),
+                    )
             refresh_empty_state()
 
         def delete_selected_history():
@@ -1944,9 +2779,26 @@ class LiveSalesApp(tk.Tk):
             style="Secondary.TButton",
         )
         delete_button.pack(side="right")
-        tree.bind("<Double-1>", lambda _event: open_selected_history())
-        tree.bind("<Return>", lambda _event: open_selected_history())
-        tree.bind("<Delete>", lambda _event: delete_selected_history())
+
+        def double_click_history(event):
+            item_id = tree.identify_row(event.y)
+            if item_id in item_to_live and tree.identify_region(event.x, event.y) in ("tree", "cell"):
+                tree.selection_set(item_id)
+                open_selected_history()
+                return "break"
+
+        def activate_history(_event):
+            if selected_live() is not None:
+                open_selected_history()
+            elif tree.selection():
+                item_id = tree.selection()[0]
+                tree.item(item_id, open=not tree.item(item_id, "open"))
+            return "break"
+
+        tree.bind("<<TreeviewSelect>>", refresh_actions)
+        tree.bind("<Double-1>", double_click_history)
+        tree.bind("<Return>", activate_history)
+        tree.bind("<Delete>", lambda _event: delete_selected_history() if selected_live() is not None else None)
 
         populate_history()
 
@@ -2038,7 +2890,7 @@ class LiveSalesApp(tk.Tk):
             return None
         try:
             return datetime.fromisoformat(value)
-        except ValueError:
+        except (TypeError, ValueError):
             return None
 
     def _show_history_live(self, live):
@@ -2776,7 +3628,7 @@ class LiveSalesApp(tk.Tk):
 
         history_sheet = wb.create_sheet("Histórico de lives")
         history_sheet.append(
-            ["Finalizada em", "Iniciada em", "Duração", "Peças", "Vendidas", "Clientes", "Total", "Nomes das clientes"]
+            ["Finalizada em", "Iniciada em", "Duração", "Peças", "Vendidas", "Clientes", "Total", "10%", "Nomes das clientes"]
         )
         for live in self._read_history():
             history_sheet.append(
@@ -2788,6 +3640,7 @@ class LiveSalesApp(tk.Tk):
                     live.get("sold_count", 0),
                     live.get("clients_count", 0),
                     live.get("total", "R$ 0,00"),
+                    self._history_commission_value(live),
                     ", ".join(live.get("clients", [])),
                 ]
             )

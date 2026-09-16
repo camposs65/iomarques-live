@@ -122,7 +122,7 @@ Exemplo da IoMarques Brechó:
 Depois de finalizar:
 
 - `Ações da live`: abre um menu limpo com `Resumo final`, `Mensagens clientes`, `Exportar Excel`, `Imprimir todos`, `Imprimir resumo`, `Imprimir planilha`, `Imprimir não vendidas` e `Histórico de lives`.
-- `Histórico de lives`: mostra as lives finalizadas, duração, peças, clientes e total. Selecione uma live e clique em `Excluir live selecionada` para remover apenas o registro do histórico.
+- `Histórico de lives`: agrupa as lives por mês e ano de finalização, com os meses mais recentes primeiro. Cada mês mostra a soma do total vendido e dos 10% das suas lives. Use a setinha do mês para recolher ou expandir as lives, que continuam mostrando duração, peças, clientes, total e 10% individuais. Registros sem data de finalização usam a data de início; sem nenhuma data válida, ficam em `Sem data`. Selecione uma live e clique em `Excluir live selecionada` para remover apenas esse registro e recalcular as somas do mês.
 - `Histórico de lives`: use `Abrir na planilha principal` ou dê dois cliques para carregar a planilha daquela live na tela principal quando ela tiver dados detalhados salvos. O app bloqueia essa abertura se houver uma live em andamento ou dados já preenchidos na planilha principal.
 - `Resumo final`: mostra cada cliente em destaque, os códigos das peças, tempos, suplentes, checkbox por peça e total da cliente. No final, mostra clientes, peças vendidas e total vendido.
 - `Mensagens clientes`: cria mensagens prontas para enviar às clientes com peças arrematadas, total e instruções de pagamento.
