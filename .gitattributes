@@ -1,2 +1,4 @@
 # Preserve backup bytes so the SHA-256 inventory works on every platform.
 /backups-publicados/**/*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+# Keep preserved live data out of source ZIPs downloaded from GitHub.
+/backups-publicados export-ignore

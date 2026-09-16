@@ -1,71 +1,50 @@
-# IoMarques Brechó - Controle de Vendas da Live
+# IoMarques Brechó — Controle de Vendas da Live · v1.7
 
-Programa desktop em Python para registrar vendas durante as lives no Instagram.
+Aplicativo para Windows usado para anotar as peças durante as lives no Instagram. O Supabase guarda a live em andamento e o histórico completo; a instalação prepara o programa e cria o atalho na Área de Trabalho.
 
-## Como instalar
+## Instalar no computador da loja
 
-```powershell
-pip install -r requirements.txt
-```
+Requisitos: Windows 10 ou 11 de 64 bits (x64), internet e um usuário do Controle do Brechó. Não é necessário instalar Python manualmente ou executar comandos.
 
-## Como abrir
+1. No GitHub, abra este repositório e escolha **Code → Download ZIP**.
+2. Clique com o botão direito no ZIP e escolha **Extrair Tudo**. Não execute o instalador de dentro do arquivo compactado.
+3. Abra a pasta extraída e dê dois cliques em **Instalar.bat**.
+4. Aguarde a preparação inicial e a janela de progresso. Na primeira instalação, o download e a montagem do aplicativo podem levar alguns minutos; mantenha a internet conectada.
+5. Quando aparecer `Pronto!`, clique em **Abrir aplicativo** ou use o atalho **IoMarques Brecho** na Área de Trabalho.
+6. No primeiro acesso, entre com o mesmo usuário e senha do Controle do Brechó e aguarde o carregamento do Supabase.
 
-```powershell
-python app.py
-```
+O instalador usa um Python compatível já disponível ou baixa o instalador oficial quando necessário. As dependências ficam em um ambiente privado, sem instalar bibliotecas no Python usado por outros projetos.
 
-## Como transformar em app de Área de Trabalho no Windows
+O aplicativo fica em `%LOCALAPPDATA%\Programs\IoMarquesLive`. A Área de Trabalho recebe apenas o atalho, inclusive quando essa pasta é gerenciada pelo OneDrive. Depois de instalado, o atalho não depende da pasta baixada do GitHub.
 
-### Opção 1: mandar o projeto para o computador da loja
+A instalação não abre o aplicativo automaticamente nem acessa ou modifica o Supabase. O botão `Abrir aplicativo` é uma ação separada; ao abrir e entrar na conta, o programa consulta a nuvem e pode iniciar a migração dos arquivos antigos encontrados.
 
-1. Coloque esta pasta em um `.zip`, pendrive, Google Drive ou OneDrive.
-2. No computador da loja, extraia a pasta em um lugar fixo, por exemplo:
+### Atualizar sem perder dados
 
-```text
-Documentos\IoMarques Lives
-```
+1. Confira se o aplicativo terminou de enviar as alterações e feche-o antes de atualizar. Não mantenha a versão antiga e a nova abertas ao mesmo tempo.
+2. Baixe e extraia a versão nova do repositório e execute novamente `Instalar.bat`.
+3. A instalação existente tem prioridade: seus dados de uso diário não são substituídos pelos arquivos da pasta baixada.
+4. Se ainda não houver dados na pasta de instalação permanente, o instalador procura a versão antiga pelo atalho da Área de Trabalho. Sem esse atalho, verifica a pasta do projeto e sua subpasta `dist`. Se houver mais de uma origem possível, pede que você escolha a pasta usada pelo aplicativo da loja.
 
-3. Instale o Python pelo site oficial:
+Os dados antigos são copiados, nunca removidos da origem. Não apague a pasta antiga, `dist` ou seus backups até conferir a migração completa no Supabase. A sessão e a fila criptografada pertencem ao usuário do Windows daquele computador: não transporte esses arquivos para outro PC. Em outro computador, faça uma instalação nova e entre na conta para carregar os dados já confirmados na nuvem.
 
-```text
-https://www.python.org/downloads/
-```
+### Se a instalação falhar
 
-Na instalação, marque a opção `Add python.exe to PATH`.
+Use **Ver relatório** na janela do instalador. O arquivo fica em `%LOCALAPPDATA%\IoMarquesLive\instalador\instalacao.log`; a preparação do Python pode gerar também `python-instalacao.log` nessa pasta. Informe a mensagem apresentada e guarde o relatório para diagnóstico. Não apague dados ou sessões para tentar corrigir a instalação.
 
-4. Dentro da pasta do projeto, dê dois cliques em:
+O ambiente de dependências fica em `%LOCALAPPDATA%\IoMarquesLive\instalador\venv`. Esse ambiente é do instalador; o aplicativo instalado possui seu próprio executável. Atualizações também podem precisar de internet para baixar dependências.
 
-```text
-criar_app_windows.bat
-```
+## Dados locais e backups
 
-O instalador cria o arquivo `dist\IoMarques Brecho.exe` e um atalho `IoMarques Brecho` na Área de Trabalho.
+O computador mantém somente os arquivos necessários para conexão e recuperação de alterações ainda não confirmadas:
 
-### Opção 2: mandar só o app pronto
+- `cloud_pendencias.dat`: fila temporária criptografada pelo Windows. Uma alteração só sai da fila após a confirmação do Supabase.
+- `cloud_migracao.json`: controle técnico da importação inicial dos arquivos antigos; não é a base de dados do histórico.
+- `integracao_sessao.dat`: sessão do Controle do Brechó protegida pelo Windows para o usuário atual. A senha não é armazenada.
 
-Se você já gerou o app neste computador, pode mandar apenas a pasta `dist` para o computador da loja. Nesse caso, o computador da loja não precisa ter Python instalado para abrir o app.
+Os antigos `live_atual.json`, `historico_lives.json`, `integracao_pendencias.json` e arquivos em `backups` não são apagados nem usados como base de gravação diária da nova versão. Guarde-os até conferir a migração completa. A fila criptografada só pode ser recuperada pelo mesmo usuário do Windows no mesmo computador; não use esse arquivo para transportar dados para outro PC.
 
-Para gerar o app pronto neste computador, rode:
-
-```powershell
-.\criar_app_windows.ps1
-```
-
-Ao clicar no `.bat`, aparece uma janela de instalação com progresso. O terminal não fica como tela principal.
-
-Depois de instalado, o app abre direto pela Área de Trabalho, sem tela de carregamento.
-
-Os dados ficam salvos junto do executável:
-
-- `live_atual.json`: live em andamento.
-- `historico_lives.json`: histórico das lives finalizadas.
-- `backups\live_atual.bak.json`: cópia de recuperação da live atual.
-- `backups\historico_lives.bak.json`: cópia de recuperação do histórico.
-- `backups\live_atual_*.json`: snapshots recentes da live atual, mantidos automaticamente.
-- `integracao_pendencias.json`: fila local com somente as lives e peças não vendidas que aguardam sincronização.
-- `integracao_sessao.dat`: sessão do Controle do Brechó protegida pelo Windows para o usuário atual.
-
-Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-publicados/` guarda cópias das lives incluídas no repositório quando solicitado, com instruções de restauração e um inventário para conferir a integridade dos arquivos.
+Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-publicados/` guarda as cópias incluídas anteriormente a pedido do responsável, com inventário de integridade. Esses arquivos foram preservados no repositório e no histórico do Git, mas `export-ignore` os exclui do ZIP gerado pelo GitHub. Um `git clone` ainda recebe os backups versionados. O instalador nunca inclui backups, sessões ou filas no executável distribuído.
 
 ## Como usar durante a live
 
@@ -79,7 +58,7 @@ Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-public
 - Clique em uma célula para editar.
 - Quando o campo `Cliente` estiver preenchido, a linha fica levemente verde.
 - Digitar na última linha vazia cria outra linha automaticamente.
-- Os dados ficam salvos automaticamente no arquivo `live_atual.json`.
+- Os dados são enviados automaticamente ao Supabase. Se houver queda de conexão, ficam protegidos na fila temporária até o envio ser confirmado.
 - Ao digitar `39,90` no valor, o app transforma em `R$ 39,90`.
 - Ao apagar `Valor` e `Código`, o campo `Tempo` fica vazio novamente.
 - Use as setas do teclado para navegar entre as células.
@@ -88,24 +67,31 @@ Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-public
 - Passe o mouse sobre `Cliente` ou `Suplente` para mostrar o `X` de remoção.
 - Durante a live, o cabeçalho grande da marca fica escondido para dar mais espaço à planilha.
 
-## Sincronização das peças não vendidas
+## Dados completos no Supabase
 
-- Clique em `Conectar recortes` e entre com o mesmo usuário e senha do aplicativo Controle do Brechó.
+- Abra o botão de conexão/sincronização e entre com o mesmo usuário e senha do aplicativo Controle do Brechó.
 - A senha não é armazenada. Depois do primeiro acesso, somente a sessão é guardada criptografada pelo Windows.
-- Ao finalizar uma live, o app envia automaticamente apenas a identificação da live, seus horários e as peças preenchidas que continuam sem cliente titular.
-- Clientes e suplentes não são enviados. O vídeo também nunca passa pelo programa nem pelo Supabase.
+- O app salva o estado da live em andamento, cronômetro, ordem e conteúdo completo das peças: valor, código, cliente, suplente e tempo. Ao finalizar, salva também o histórico, os totais e as contagens.
+- O Controle do Brechó mostra todas as lives e o total vendido e os 10% por live e por mês. Os 10% de cada live são calculados no servidor com o mesmo arredondamento do histórico desktop; o resumo mensal soma esses valores individuais.
+- Clientes, suplentes e detalhes das vendidas passam a integrar os dados protegidos do desktop no Supabase. A tela de recortes da PWA continua recebendo apenas os resumos e as não vendidas. Esses dados não são ligados automaticamente aos cadastros do controle operacional.
+- Os jogos continuam funcionando em memória, sem saves ou recordes persistidos. O vídeo nunca passa pelo desktop nem pelo Supabase. Exportações, impressão e arquivos temporários da automação de mensagens continuam sendo ações locais separadas.
+- Lives antigas com apenas resumo também são enviadas, quando têm ID e datas válidas. Valores ausentes ou inválidos ficam como não informados, nunca como uma venda de valor zero. Lives com todas as peças vendidas continuam aparecendo no histórico.
 - Alterações feitas depois da live são sincronizadas novamente. Se uma peça receber cliente, ela deixa de aparecer como não vendida.
-- Se a internet falhar, o histórico local continua funcionando e o envio fica como `Pendente`; o app tenta novamente depois.
-- O status aparece abaixo do total vendido: `Conectar recortes`, `Envio pendente`, `Enviando não vendidas...` ou `Não vendidas sincronizadas`.
-- A importação manual de `historico_lives.json` na PWA continua disponível como alternativa.
+- O histórico é consultado no Supabase, permitindo abri-lo em outro computador depois de entrar na conta. Não é mantida uma cópia permanente de todo o histórico no PC. Para carregar o histórico pela primeira vez após abrir o programa, é necessária uma conexão.
+- Se a internet cair durante o uso, a live pode continuar sendo anotada e as mudanças ficam na fila protegida. O histórico já carregado permanece em memória enquanto o programa está aberto. Se fechar offline, somente os dados ainda pendentes têm recuperação local; o restante do histórico volta a carregar ao reconectar.
+- A tela diferencia o que está salvo no Supabase do que está aguardando conexão. Nunca considere uma alteração pendente como já protegida na nuvem: se o computador falhar antes do envio, ela poderá ser perdida.
+- `Sincronizar agora` tenta enviar as pendências e consultar os dados remotos novamente. A migração inicial usa os arquivos antigos sem sobrescrever lives que já tenham dados completos no banco. Se o backup e o banco divergirem, a diferença fica protegida como conflito para revisão.
+- Se duas pessoas alterarem a mesma live, o app conserva a alteração pendente e avisa sobre o conflito. Não sobrescreve silenciosamente os dados do outro computador. Descartar a alteração local exige confirmação explícita.
+- A exclusão completa exige conta administradora e confirmação do servidor. Uma live excluída não é recriada pela importação de um backup antigo.
+- A importação manual de `historico_lives.json` na PWA continua disponível como alternativa, inclusive para o backup trazido da loja. A importação utiliza os mesmos resumos e não envia os nomes das clientes.
 
-Ao gerar o executável, `preparar_config_integracao.py` cria o arquivo ignorado `dist\integracao_supabase.json`. Ele usa, nesta ordem:
+A estrutura de nuvem depende da migration `supabase/migrations/20260917000200_dados_completos_app_live.sql` do projeto `brecho-controle` e das migrations anteriores. Essa preparação é feita pelo responsável pelo banco, não pelo instalador. Sem a estrutura necessária, o aplicativo não confirma a gravação na nuvem. As importações antigas não podem sobrescrever os resumos das lives já gerenciadas pela versão com dados completos.
 
-1. Variáveis `IOMARQUES_SUPABASE_URL`, `IOMARQUES_SUPABASE_PUBLISHABLE_KEY` e `IOMARQUES_AUTH_EMAIL_BASE`.
-2. O arquivo local ignorado `integracao_supabase.local.json`.
-3. O `.env.local` do projeto irmão `brecho-controle`, quando os dois projetos estão lado a lado.
+### Configuração da conexão
 
-Leve a pasta `dist` completa para o computador da loja. O arquivo de configuração contém apenas os dados públicos necessários para o aplicativo se conectar; nunca use a chave `service_role`.
+O repositório inclui `config_publica.json`, contendo somente a URL do projeto, a chave publicável e o e-mail-base usado para o login. Esses dados identificam a conexão, mas não substituem o login nem concedem acesso administrativo. Senhas, sessões, tokens de usuário, chaves secretas e `service_role` nunca devem entrar nesse arquivo ou no Git.
+
+O instalador valida essa configuração e cria `integracao_supabase.json` na pasta permanente do aplicativo. Se a configuração estiver ausente ou inválida, a instalação não é declarada concluída. Para desenvolvimento, continuam disponíveis as variáveis `IOMARQUES_SUPABASE_URL`, `IOMARQUES_SUPABASE_PUBLISHABLE_KEY`, `IOMARQUES_AUTH_EMAIL_BASE`, arquivos locais de configuração e o `.env.local` do projeto irmão `brecho-controle`; a configuração pública é a alternativa incluída no download.
 
 Exemplo da IoMarques Brechó:
 
@@ -122,7 +108,7 @@ Exemplo da IoMarques Brechó:
 Depois de finalizar:
 
 - `Ações da live`: abre um menu limpo com `Resumo final`, `Mensagens clientes`, `Exportar Excel`, `Imprimir todos`, `Imprimir resumo`, `Imprimir planilha`, `Imprimir não vendidas` e `Histórico de lives`.
-- `Histórico de lives`: agrupa as lives por mês e ano de finalização, com os meses mais recentes primeiro. Cada mês mostra a soma do total vendido e dos 10% das suas lives. Use a setinha do mês para recolher ou expandir as lives, que continuam mostrando duração, peças, clientes, total e 10% individuais. Registros sem data de finalização usam a data de início; sem nenhuma data válida, ficam em `Sem data`. Selecione uma live e clique em `Excluir live selecionada` para remover apenas esse registro e recalcular as somas do mês.
+- `Histórico de lives`: agrupa as lives por mês e ano de finalização, com os meses mais recentes primeiro. Cada mês mostra a soma do total vendido e dos 10% das suas lives. Use a setinha do mês para recolher ou expandir as lives, que continuam mostrando duração, peças, clientes, total e 10% individuais. Registros sem data de finalização usam a data de início; sem nenhuma data válida, ficam em `Sem data`. Somente administradores podem excluir uma live; a exclusão confirmada remove seus dados completos e o resumo no banco, recalculando as somas do mês.
 - `Histórico de lives`: use `Abrir na planilha principal` ou dê dois cliques para carregar a planilha daquela live na tela principal quando ela tiver dados detalhados salvos. O app bloqueia essa abertura se houver uma live em andamento ou dados já preenchidos na planilha principal.
 - `Resumo final`: mostra cada cliente em destaque, os códigos das peças, tempos, suplentes, checkbox por peça e total da cliente. No final, mostra clientes, peças vendidas e total vendido.
 - `Mensagens clientes`: cria mensagens prontas para enviar às clientes com peças arrematadas, total e instruções de pagamento.
@@ -131,16 +117,15 @@ Depois de finalizar:
 - `Imprimir resumo`: envia um resumo por cliente com checkbox, nome da cliente em negrito, suplente na mesma linha da peça e totais finais. Quando não couber em uma folha, continua em páginas seguintes com fonte legível.
 - `Imprimir planilha`: imprime a planilha em A4, retrato, ajustada para caber em uma página.
 - `Imprimir não vendidas`: imprime apenas as peças preenchidas que ainda não têm cliente, também com checkbox.
-- `Nova live / Limpar tudo`: apaga os dados e zera o contador para começar outra live.
+- `Nova live / Limpar tudo`: guarda a planilha atual e abre outra vazia com o contador zerado. Não exclui o histórico ou os rascunhos do Supabase; exclusão definitiva é uma ação separada de administrador.
 
-## Logo e carregamento
+## Logo e ícone
 
 Os arquivos de marca ficam na pasta `assets`.
 
 - Salve a logo original enviada como `assets/logo_original.png`.
 - Rode `python gerar_assets_logo.py`.
 - `logo_round.png`: logo original ajustado para o cabeçalho do app.
-- `install_splash.png`: tela de carregamento do instalador.
 - `app_icon.ico`: ícone do aplicativo no Windows.
 
 ## Remover cliente ou suplente
@@ -149,3 +134,20 @@ O `X` aparece somente quando o mouse está em cima de uma célula de cliente ou 
 
 - `X` em `Cliente`: remove a titular, promove `Suplente` para `Cliente` e limpa `Suplente`.
 - `X` em `Suplente`: limpa apenas a suplente.
+
+## Desenvolvimento
+
+O fluxo de instalação tem uma entrada: `Instalar.bat`. Ele chama `instalar.ps1`, que prepara o Python e o ambiente privado. A janela está em `instalar_app_windows.py`; a montagem do executável, preservação de dados e criação do atalho ficam em `installation.py`. Os antigos `criar_app_windows.bat` e `criar_app_windows.ps1` foram substituídos.
+
+Para trabalhar no código com Python já instalado, use PowerShell na pasta do projeto:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests
+.\.venv\Scripts\python.exe app.py
+```
+
+Abrir `app.py` inicia o aplicativo real, incluindo sua sincronização; não use essa ação como teste isolado de banco. A suíte automatizada utiliza serviços simulados. `requirements-build.txt` reúne as dependências da instalação e da geração do executável. Não é necessário executá-las manualmente para usar o programa.
+
+A automação de Directs é um projeto separado, `iomarques-instagram-direct`, com requisitos próprios. A instalação preserva seu caminho quando encontra esse projeto; não instala o automatizador nem copia credenciais dele. Jogos, exportação e impressão continuam incluídos no aplicativo principal.

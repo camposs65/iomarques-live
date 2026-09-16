@@ -13,6 +13,8 @@ ENV/
 build/
 dist/
 *.spec
+.installer-test*/
+.installer-cache/
 
 # Installer and app runtime data
 live_atual.json
@@ -25,6 +27,9 @@ integracao_supabase.json
 integracao_supabase.local.json
 integracao_sessao.dat
 integracao_pendencias.json
+cloud_pendencias.dat
+cloud_migracao.json
+instalacao.json
 
 # Local exports and reports
 *.xlsx
@@ -33,6 +38,7 @@ integracao_pendencias.json
 *.txt
 !README.md
 !requirements.txt
+!requirements-build.txt
 !assets/LEIA-ME-LOGO.txt
 
 # Copies of live data explicitly selected for publication.

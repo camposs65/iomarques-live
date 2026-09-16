@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import queue
 import random
 import subprocess
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from ctypes import wintypes
 
-from supabase_sync import SupabaseHistorySync
+from cloud_store import CloudLiveStore
 
 try:
     from openpyxl import Workbook
@@ -28,6 +29,8 @@ except ImportError:
 
 from roguelike_game import RogueBrechoGame
 
+
+APP_VERSION = "1.7"
 
 COLUMNS = ("valor", "codigo", "cliente", "suplente", "tempo")
 HEADERS = {
@@ -60,8 +63,6 @@ BACKUP_DIR = APP_DIR / "backups"
 AUTOSAVE_BACKUP_PATH = BACKUP_DIR / "live_atual.bak.json"
 HISTORY_BACKUP_PATH = BACKUP_DIR / "historico_lives.bak.json"
 AUTOSAVE_INTERVAL_MS = 10_000
-SNAPSHOT_INTERVAL_SECONDS = 60
-MAX_LIVE_SNAPSHOTS = 30
 SUMMARY_SEPARATOR = "-------------------------------------------------------------"
 CHECKBOX_TEXT = "[ ]"
 REPORT_TWO_COLUMN_MIN_LINES = 38
@@ -96,10 +97,32 @@ COLORS = {
 }
 
 
+def find_message_automation_app(app_dir, user_home):
+    """Locate the optional companion app without depending on the checkout location."""
+    app_dir = Path(app_dir)
+    candidates = []
+    try:
+        installation = json.loads((app_dir / "instalacao.json").read_text(encoding="utf-8"))
+        value = installation.get("automation_app") if isinstance(installation, dict) else None
+        if isinstance(value, str) and value.strip():
+            configured = Path(value)
+            if configured.is_absolute() and configured.name.lower() == "app.py" and configured.is_file():
+                candidates.append(configured)
+    except (OSError, UnicodeError, ValueError):
+        # Installation metadata is optional; legacy discovery remains available.
+        pass
+    candidates.extend([
+        Path(user_home) / "iomarques-instagram-direct" / "app.py",
+        app_dir.parent / "iomarques-instagram-direct" / "app.py",
+        app_dir.parent.parent / "iomarques-instagram-direct" / "app.py",
+    ])
+    return next((candidate for candidate in candidates if candidate.is_file()), None)
+
+
 class LiveSalesApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("IoMarques Brechó - Controle de Vendas da Live")
+        self.title(f"IoMarques Brechó - Controle de Vendas da Live · v{APP_VERSION}")
         self.geometry("1160x720")
         self.minsize(960, 580)
 
@@ -130,7 +153,6 @@ class LiveSalesApp(tk.Tk):
         self.live_elapsed_seconds = 0
         self.timer_job = None
         self.autosave_job = None
-        self.last_live_snapshot_at = None
         self.logo_header_image = None
         self.logo_icon_image = None
         self.sync_manager = None
@@ -139,25 +161,39 @@ class LiveSalesApp(tk.Tk):
         self.sync_username = ""
         self.sync_window = None
         self.sync_dialog_status_label = None
+        self.cloud_events = queue.Queue()
+        self.cloud_poll_job = None
+        self.history_refreshers = {}
+        self.sheet_dirty = False
+        self.applying_cloud = False
+        self.last_saved_sheet = None
+        self.last_save_failed = False
+        self.closing = False
+        self.initial_pending_recovery = True
 
         self._setup_style()
         self._build_ui()
 
-        self.sync_manager = SupabaseHistorySync(
+        self.sync_manager = CloudLiveStore(
             APP_DIR,
             Path(__file__).resolve().parent,
             self._handle_sync_status,
+            self._handle_cloud_data,
         )
+
+        self._add_row()
+        if self.sync_manager.needs_legacy_bootstrap:
+            try:
+                history, saved_data = self._read_legacy_data()
+                self.sync_manager.bootstrap_legacy(history, saved_data)
+            except ValueError:
+                self.sync_manager.bootstrap_legacy([], {}, error=(
+                    "Não foi possível ler o histórico ou a live antiga, nem seu backup. "
+                    "Os arquivos foram preservados; a migração precisa ser revisada."
+                ))
+        self._apply_cloud_data()
+        self._poll_cloud_events()
         self.sync_manager.start()
-
-        saved_data = self._read_saved_data()
-        self._restore_live_state(saved_data)
-        loaded = self._load_saved_rows(saved_data)
-        if not loaded:
-            self._add_row()
-
-        history = self._read_history()
-        self.sync_manager.queue_history(history)
         self._refresh_totals()
         self._refresh_live_controls()
         self._schedule_timer_tick()
@@ -220,42 +256,129 @@ class LiveSalesApp(tk.Tk):
         )
 
     def _handle_sync_status(self, status, detail, username):
-        def apply_status():
-            if not self.winfo_exists():
-                return
-            self.sync_status = status
-            self.sync_detail = detail
-            self.sync_username = username
-            labels = {
-                "not_configured": "Integração não configurada",
-                "auth_required": "Conectar recortes",
-                "pending": "Envio pendente",
-                "syncing": "Enviando não vendidas...",
-                "synced": "Não vendidas sincronizadas",
-                "starting": "Preparando sincronização...",
-            }
-            colors = {
-                "not_configured": COLORS["warning_text"],
-                "auth_required": COLORS["button_text"],
-                "pending": COLORS["warning_text"],
-                "syncing": COLORS["primary"],
-                "synced": "#2E6F47",
-                "starting": COLORS["button_text"],
-            }
-            self.sync_status_button.configure(
-                text=labels.get(status, "Sincronização"),
-                fg=colors.get(status, COLORS["button_text"]),
-            )
-            if (
-                self.sync_dialog_status_label is not None
-                and self.sync_dialog_status_label.winfo_exists()
-            ):
-                self.sync_dialog_status_label.configure(text=detail)
+        # O worker nunca chama Tk: a fila é consumida pelo thread da janela.
+        self.cloud_events.put(("status", (status, detail, username)))
 
+    def _handle_cloud_data(self, *_args):
+        self.cloud_events.put(("data", None))
+
+    def _poll_cloud_events(self):
+        while True:
+            try:
+                kind, value = self.cloud_events.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "status":
+                self._apply_sync_status(*value)
+            elif kind == "data":
+                self._apply_cloud_data()
+            elif kind == "call":
+                value()
+        if not self.closing:
+            self.cloud_poll_job = self.after(150, self._poll_cloud_events)
+
+    def _apply_sync_status(self, status, detail, username):
+        if self.last_save_failed and status not in ("auth_required", "not_configured"):
+            status, detail = "error", "Há alterações na planilha que ainda não puderam ser protegidas. Não feche o programa."
+        elif (status not in ("auth_required", "not_configured") and self.live_id
+              and self.sync_manager and self.sync_manager.is_deleted(self.live_id)):
+            status = "deleted"
+            detail = "Esta live foi excluída do Supabase. A planilha está somente para consulta e exportação. Use Nova live para continuar."
+        self.sync_status, self.sync_detail, self.sync_username = status, detail, username
+        labels = {
+            "not_configured": "Supabase não configurado",
+            "auth_required": "Conectar ao Supabase",
+            "pending": "Aguardando conexão",
+            "syncing": "Sincronizando...",
+            "synced": "Salvo no Supabase",
+            "starting": "Carregando Supabase...",
+            "loading": "Carregando Supabase...",
+            "conflict": "Conflito: revisar alterações",
+            "error": "Não foi possível salvar",
+            "deleted": "Live excluída do Supabase",
+        }
+        self.sync_status_button.configure(
+            text=labels.get(status, "Ver sincronização"),
+            fg="#2E6F47" if status == "synced" else COLORS["warning_text"]
+            if status in ("pending", "conflict", "error", "deleted", "not_configured") else COLORS["primary"],
+        )
+        if self.sync_dialog_status_label is not None and self.sync_dialog_status_label.winfo_exists():
+            self.sync_dialog_status_label.configure(text=detail)
+        self._refresh_cloud_editability()
+
+    def _refresh_cloud_editability(self):
+        editable = bool(self.sync_manager and self.sync_manager.ready
+                        and not (self.live_id and self.sync_manager.is_deleted(self.live_id)))
+        for entries in self.cell_entries:
+            for entry in entries:
+                entry.configure(state="normal" if editable else "disabled")
+        for button in self.time_check_buttons:
+            button.configure(state="normal" if editable else "disabled")
+        for buttons in self.clear_buttons:
+            for button in buttons:
+                if button is not None:
+                    button.configure(state="normal" if editable else "disabled")
+        self.start_button.state(["!disabled" if editable and not self.live_running else "disabled"])
+        self.finish_button.state(["!disabled" if editable and self.live_running else "disabled"])
+
+    def _sheet_is_pristine(self):
+        return not self.sheet_dirty and not self.live_id and not self._rows()
+
+    def _apply_cloud_data(self):
+        if self.sync_manager is None:
+            return
+        # Somente a fila do próprio computador é recuperada automaticamente.
+        # Lives vindas de outro computador exigem escolha explícita da usuária.
+        if self.initial_pending_recovery:
+            self.initial_pending_recovery = False
+            pending = self.sync_manager.pending_states()
+            if self._sheet_is_pristine() and len(pending) == 1:
+                self._apply_saved_state(pending[0])
+        for window, refresh in list(self.history_refreshers.items()):
+            if window.winfo_exists():
+                refresh()
+            else:
+                self.history_refreshers.pop(window, None)
+        self._refresh_cloud_editability()
+        if self.live_id and self.sync_manager.is_deleted(self.live_id):
+            self._apply_sync_status(self.sync_status, self.sync_detail, self.sync_username)
+
+    def _apply_saved_state(self, data, history=None):
+        old_id = self.live_id
+        self.applying_cloud = True
         try:
-            self.after(0, apply_status)
-        except tk.TclError:
-            pass
+            if self.timer_job is not None:
+                self.after_cancel(self.timer_job)
+                self.timer_job = None
+            self._reset_sheet_widgets()
+            self._restore_live_state(data)
+            if not self._load_saved_rows(data):
+                self._add_row()
+            self.undo_stack.clear()
+            self.redo_stack.clear()
+            self.sheet_dirty = False
+            self.last_saved_sheet = self._sheet_data()
+            self.last_save_failed = False
+            self._refresh_totals()
+            self._refresh_live_controls()
+            self._schedule_timer_tick()
+            if old_id:
+                self.sync_manager.end_edit(old_id)
+            if self.live_id:
+                if history is None:
+                    self.sync_manager.begin_edit(self.live_id, state=data)
+                else:
+                    self.sync_manager.begin_edit(self.live_id, history=history)
+        finally:
+            self.applying_cloud = False
+
+    def _reset_sheet_widgets(self):
+        for child in self.body_frame.winfo_children():
+            child.destroy()
+        for name in ("row_vars", "index_frames", "index_labels", "time_check_vars",
+                     "time_check_buttons", "manual_time_vars", "cell_frames", "cell_entries", "clear_buttons"):
+            getattr(self, name).clear()
+        self.active_cell = self.hovered_cell = None
 
     def open_sync_dialog(self):
         if self.sync_window is not None and self.sync_window.winfo_exists():
@@ -265,8 +388,8 @@ class LiveSalesApp(tk.Tk):
 
         window = tk.Toplevel(self)
         self.sync_window = window
-        window.title("Sincronização dos recortes")
-        window.geometry("510x480")
+        window.title(f"Dados no Supabase · v{APP_VERSION}")
+        window.geometry("540x590")
         window.minsize(470, 440)
         window.configure(bg=COLORS["app_bg"])
         window.transient(self)
@@ -282,7 +405,7 @@ class LiveSalesApp(tk.Tk):
         top.pack(fill="x")
         tk.Label(
             top,
-            text="Enviar peças não vendidas",
+            text="Lives salvas no Supabase",
             bg=COLORS["primary"],
             fg="#FFFFFF",
             font=("Segoe UI Semibold", 17),
@@ -300,8 +423,9 @@ class LiveSalesApp(tk.Tk):
         tk.Label(
             body,
             text=(
-                "O histórico continua salvo neste computador. O app envia somente "
-                "a live e as peças preenchidas que estão sem cliente titular."
+                "A live atual e o histórico completo ficam no Supabase, incluindo "
+                "peças, clientes e suplentes. Se a conexão cair, somente as alterações "
+                "pendentes ficam protegidas neste computador até o banco confirmar."
             ),
             bg=COLORS["app_bg"],
             fg=COLORS["text"],
@@ -344,7 +468,7 @@ class LiveSalesApp(tk.Tk):
             ).pack(anchor="e", pady=(22, 0))
             return
 
-        if self.sync_manager.is_authenticated:
+        if self.sync_manager.is_authenticated and self.sync_status != "auth_required":
             account = self.sync_manager.username or self.sync_username
             tk.Label(
                 body,
@@ -358,18 +482,33 @@ class LiveSalesApp(tk.Tk):
             actions.pack(fill="x", pady=(22, 0))
 
             def sync_now():
-                self.sync_manager.queue_history(self._read_history(), immediate=True)
+                if not self._save_rows():
+                    return
                 self.sync_manager.sync_now()
                 close_window()
 
             def disconnect():
+                self._finish_active_cell()
+                if not self._save_rows() or self.sync_manager.has_pending:
+                    messagebox.showwarning(
+                        "Envios pendentes",
+                        "Aguarde a confirmação do Supabase antes de desconectar. "
+                        "Você pode fechar o programa e recuperar a fila protegida depois.",
+                        parent=window,
+                    )
+                    return
                 if not messagebox.askyesno(
                     "Desconectar conta?",
-                    "Os históricos e envios pendentes continuarão salvos neste computador.",
+                    "Os dados confirmados continuam no Supabase. A planilha será fechada neste computador.",
                     parent=window,
                 ):
                     return
                 self.sync_manager.logout()
+                self._apply_saved_state({})
+                for history_window in list(self.history_refreshers):
+                    if history_window.winfo_exists():
+                        history_window.destroy()
+                self.history_refreshers.clear()
                 close_window()
 
             ttk.Button(
@@ -384,6 +523,15 @@ class LiveSalesApp(tk.Tk):
                 command=disconnect,
                 style="Secondary.TButton",
             ).pack(side="right")
+            ttk.Button(
+                body, text="Retomar uma live / rascunho",
+                command=self.show_cloud_lives, style="Secondary.TButton",
+            ).pack(fill="x", pady=(15, 0))
+            if self.sync_manager.conflicts():
+                ttk.Button(
+                    body, text="Revisar conflitos de sincronização",
+                    command=self.show_cloud_conflicts, style="Secondary.TButton",
+                ).pack(fill="x", pady=(10, 0))
             return
 
         form = tk.Frame(body, bg=COLORS["app_bg"])
@@ -419,10 +567,7 @@ class LiveSalesApp(tk.Tk):
                 if success:
                     close_window()
 
-            try:
-                self.after(0, update_dialog)
-            except tk.TclError:
-                pass
+            self.cloud_events.put(("call", update_dialog))
 
         def login(_event=None):
             username = username_entry.get().strip()
@@ -677,7 +822,7 @@ class LiveSalesApp(tk.Tk):
         ttk.Button(parent, text="Aventura", command=self.show_roguelike_game, style="Secondary.TButton").pack(
             side="left", padx=(0, 8)
         )
-        ttk.Button(parent, text="Nova live / Limpar tudo", command=self.clear_all, style="Secondary.TButton").pack(
+        ttk.Button(parent, text="Nova live", command=self.clear_all, style="Secondary.TButton").pack(
             side="left"
         )
 
@@ -721,6 +866,7 @@ class LiveSalesApp(tk.Tk):
         menu.add_command(label="Imprimir não vendidas", command=self.print_unsold_pieces)
         menu.add_separator()
         menu.add_command(label="Histórico de lives", command=self.show_history)
+        menu.add_command(label="Retomar live / rascunho", command=self.show_cloud_lives)
         button.configure(menu=menu)
         return container
 
@@ -1651,6 +1797,8 @@ class LiveSalesApp(tk.Tk):
         return "break"
 
     def _restore_rows_snapshot(self, rows):
+        if not self.sync_manager.ready or (self.live_id and self.sync_manager.is_deleted(self.live_id)):
+            return
         active_cell = self.active_cell
         self.restoring_rows = True
         try:
@@ -2273,13 +2421,29 @@ class LiveSalesApp(tk.Tk):
                 rows.append(row)
         return rows
 
-    def _read_saved_data(self):
-        data = self._read_json_with_backup(AUTOSAVE_PATH, AUTOSAVE_BACKUP_PATH, {})
-        return data if isinstance(data, dict) else {}
+    def _read_legacy_data(self):
+        # Apenas migração: não atualizar, copiar nem apagar os arquivos antigos.
+        def read_pair(primary, backup, validator, default):
+            for path in (primary, backup):
+                data = self._read_json_file(path)
+                if validator(data):
+                    return data
+            if primary.exists() or backup.exists():
+                raise ValueError("Legacy data could not be read safely")
+            return default
 
-    def _save_rows(self, show_error=True, force_snapshot=False):
-        data = {
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        def valid_history(data):
+            lives = data if isinstance(data, list) else data.get("lives") if isinstance(data, dict) else None
+            return isinstance(lives, list) and all(isinstance(live, dict) for live in lives)
+
+        history = read_pair(HISTORY_PATH, HISTORY_BACKUP_PATH, valid_history, [])
+        state = read_pair(AUTOSAVE_PATH, AUTOSAVE_BACKUP_PATH,
+                          lambda value: isinstance(value, dict) and isinstance(value.get("rows"), list)
+                          and isinstance(value.get("live"), dict), {})
+        return history if isinstance(history, list) else history["lives"], state
+
+    def _sheet_data(self):
+        return {
             "live": {
                 "id": self.live_id,
                 "running": self.live_running,
@@ -2294,119 +2458,44 @@ class LiveSalesApp(tk.Tk):
             },
             "rows": self._rows(),
         }
-        saved = self._write_json_with_backup(
-            AUTOSAVE_PATH,
-            data,
-            AUTOSAVE_BACKUP_PATH,
-            "Erro ao salvar",
-            f"Não consegui salvar a live atual:\n{{error}}",
-            show_error=show_error,
-        )
+
+    def _save_rows(self, show_error=True):
+        if self.applying_cloud:
+            return True
+        if not self.live_id and not self.live_running and not self._rows():
+            return True
+        if not self.live_id:
+            self.live_id = f"live_{uuid.uuid4().hex}"
+            if self.sync_manager:
+                self.sync_manager.begin_edit(self.live_id)
+        data = self._sheet_data()
+        if data == self.last_saved_sheet and not self.last_save_failed:
+            return True
+        self.sheet_dirty = True
+        history = None
+        if self.live_finished_at is not None and not self.live_running:
+            history = self._current_live_history_record(self.live_finished_at)
+        # A cópia temporária é criptografada pelo serviço antes de confirmar o save.
+        snapshot = {**data, "updated_at": datetime.now().isoformat(timespec="seconds")}
+        saved = bool(self.sync_manager and self.sync_manager.queue_state(snapshot, history=history))
+        self.last_save_failed = not saved
         if saved:
-            self._write_live_snapshot(data, force=force_snapshot, show_error=show_error)
-            if (
-                self.live_id
-                and not self.live_running
-                and self.live_finished_at is not None
-            ):
-                self._upsert_current_live_history(self.live_finished_at)
-
-    def _read_json_with_backup(self, path, backup_path, default):
-        data = self._read_json_file(path)
-        if data is not None:
-            try:
-                self._copy_file_atomic(path, backup_path)
-            except OSError:
-                pass
-            return data
-
-        data = self._read_json_file(backup_path)
-        if data is not None:
-            return data
-
-        return default
+            self.last_saved_sheet = data
+        elif show_error:
+            messagebox.showerror(
+                "Alterações ainda não protegidas",
+                "Não foi possível guardar as alterações na fila protegida. "
+                "Não feche o programa nem limpe a planilha. Tente sincronizar novamente.",
+            )
+        return saved
 
     def _read_json_file(self, path):
         if not path.exists():
             return None
         try:
             return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, UnicodeError, json.JSONDecodeError):
             return None
-
-    def _write_json_with_backup(self, path, data, backup_path, error_title, error_message, show_error=True):
-        try:
-            self._write_json_atomic(path, data)
-            self._copy_file_atomic(path, backup_path)
-            return True
-        except OSError as exc:
-            if show_error:
-                messagebox.showerror(error_title, error_message.format(error=exc))
-            return False
-
-    def _write_json_atomic(self, path, data):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_name(f".{path.stem}_{uuid.uuid4().hex}.tmp")
-        try:
-            with tmp_path.open("w", encoding="utf-8") as file:
-                json.dump(data, file, ensure_ascii=False, indent=2)
-                file.write("\n")
-                file.flush()
-                os.fsync(file.fileno())
-            tmp_path.replace(path)
-        finally:
-            try:
-                if tmp_path.exists():
-                    tmp_path.unlink()
-            except OSError:
-                pass
-
-    def _copy_file_atomic(self, source_path, target_path):
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = target_path.with_name(f".{target_path.stem}_{uuid.uuid4().hex}.tmp")
-        try:
-            with source_path.open("rb") as source, tmp_path.open("wb") as target:
-                target.write(source.read())
-                target.flush()
-                os.fsync(target.fileno())
-            tmp_path.replace(target_path)
-        finally:
-            try:
-                if tmp_path.exists():
-                    tmp_path.unlink()
-            except OSError:
-                pass
-
-    def _write_live_snapshot(self, data, force=False, show_error=True):
-        if not data.get("rows"):
-            return
-
-        now = datetime.now()
-        if not force and self.last_live_snapshot_at is not None:
-            elapsed = (now - self.last_live_snapshot_at).total_seconds()
-            if elapsed < SNAPSHOT_INTERVAL_SECONDS:
-                return
-
-        snapshot_path = BACKUP_DIR / f"live_atual_{now.strftime('%Y%m%d_%H%M%S')}.json"
-        try:
-            self._write_json_atomic(snapshot_path, data)
-            self.last_live_snapshot_at = now
-            self._cleanup_live_snapshots()
-        except OSError as exc:
-            if show_error:
-                messagebox.showerror("Erro no backup", f"Não consegui criar uma cópia de segurança da live:\n{exc}")
-
-    def _cleanup_live_snapshots(self):
-        snapshots = sorted(
-            BACKUP_DIR.glob("live_atual_*.json"),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        )
-        for snapshot in snapshots[MAX_LIVE_SNAPSHOTS:]:
-            try:
-                snapshot.unlink()
-            except OSError:
-                pass
 
     def _restore_live_state(self, data):
         live = data.get("live", {}) if isinstance(data, dict) else {}
@@ -2469,28 +2558,16 @@ class LiveSalesApp(tk.Tk):
         return str(row.get(column, "")).strip()
 
     def _read_history(self):
-        data = self._read_json_with_backup(HISTORY_PATH, HISTORY_BACKUP_PATH, [])
-        if isinstance(data, list):
-            return data
-        return data.get("lives", []) if isinstance(data, dict) else []
+        return self.sync_manager.history() if self.sync_manager else []
 
     def _write_history(self, lives, deleted_live_ids=None):
-        data = {
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
-            "lives": lives,
-        }
-        saved = self._write_json_with_backup(
-            HISTORY_PATH,
-            data,
-            HISTORY_BACKUP_PATH,
-            "Erro ao salvar histórico",
-            f"Não consegui salvar o histórico de lives:\n{{error}}",
-        )
-        if saved and self.sync_manager:
-            self.sync_manager.queue_history(lives)
-            for live_id in deleted_live_ids or []:
-                self.sync_manager.queue_delete(live_id)
-        return saved
+        if not self.sync_manager:
+            return False
+        if deleted_live_ids:
+            if not self.sync_manager.is_admin:
+                return False
+            return all(self.sync_manager.queue_delete(live_id, immediate=True) for live_id in deleted_live_ids)
+        return self.sync_manager.queue_history(lives)
 
     def _history_commission_amount(self, live):
         total = self._parse_money(str(live.get("total", "0") if isinstance(live, dict) else "0"))
@@ -2593,8 +2670,145 @@ class LiveSalesApp(tk.Tk):
         lives.sort(key=lambda live: live.get("finished_at", ""), reverse=True)
         self._write_history(lives)
 
+    def show_cloud_lives(self):
+        if not self.sync_manager:
+            return
+        self.sync_manager.sync_now()
+        states = self.sync_manager.current_states()
+        if not states:
+            messagebox.showinfo(
+                "Lives e rascunhos",
+                "Não há live em andamento ou rascunho carregado. "
+                "Se acabou de conectar, aguarde a sincronização e tente novamente.",
+            )
+            return
+        window = tk.Toplevel(self)
+        window.title("Retomar live / rascunho")
+        window.geometry("660x340")
+        window.configure(bg=COLORS["app_bg"])
+        tk.Label(window, text="Escolha a live que deseja continuar neste computador.",
+                 bg=COLORS["app_bg"], fg=COLORS["text"], font=("Segoe UI", 11)).pack(padx=18, pady=15)
+        tree = ttk.Treeview(window, columns=("date", "status", "pieces"), show="headings", selectmode="browse")
+        tree.heading("date", text="Início")
+        tree.heading("status", text="Situação")
+        tree.heading("pieces", text="Linhas")
+        tree.pack(fill="both", expand=True, padx=18)
+        for index, data in enumerate(states):
+            live = data.get("live", {})
+            tree.insert("", "end", iid=str(index), values=(
+                self._format_history_datetime(live.get("first_started_at")) or "Rascunho não iniciado",
+                "Em andamento" if live.get("running") else "Rascunho",
+                len(data.get("rows", [])),
+            ))
+
+        def resume():
+            selection = tree.selection()
+            if not selection:
+                return
+            self._finish_active_cell()
+            if self.live_running:
+                messagebox.showwarning("Live em andamento", "Finalize a live aberta antes de trocar de planilha.", parent=window)
+                return
+            if not messagebox.askyesno(
+                "Continuar neste computador?",
+                "Abra esta live somente se ninguém estiver editando a mesma planilha em outro computador. "
+                "Se duas pessoas alterarem, o app preserva a fila e avisa sobre o conflito.\n\n"
+                "Os dados da planilha atual serão guardados antes da troca. Continuar?", parent=window,
+            ):
+                return
+            if not self._save_rows():
+                return
+            selected_id = states[int(selection[0])].get("live", {}).get("id")
+            current = next((state for state in self.sync_manager.current_states()
+                            if state.get("live", {}).get("id") == selected_id), None)
+            if current is None:
+                messagebox.showinfo("Live atualizada", "Essa live foi finalizada ou removida. Atualize a lista.", parent=window)
+                return
+            self._apply_saved_state(current)
+            window.destroy()
+
+        ttk.Button(window, text="Retomar selecionada", command=resume, style="Primary.TButton").pack(pady=15)
+        if self.sync_manager.is_admin:
+            def delete_draft():
+                selection = tree.selection()
+                if not selection:
+                    return
+                live_id = states[int(selection[0])].get("live", {}).get("id")
+                if live_id == self.live_id:
+                    messagebox.showwarning("Planilha aberta", "Use 'Nova live' para fechar esta planilha antes de excluí-la.", parent=window)
+                    return
+                if not messagebox.askyesno(
+                    "Excluir live / rascunho?",
+                    "Essa ação exclui definitivamente a live e suas peças do Supabase. Continuar?", parent=window,
+                ):
+                    return
+                if not self.sync_manager.queue_delete(live_id, immediate=True):
+                    messagebox.showerror("Exclusão não enviada", "Verifique a conexão e seu acesso de administrador.", parent=window)
+                    return
+                messagebox.showinfo("Exclusão solicitada", "Aguarde a confirmação do Supabase antes de considerar a live excluída.", parent=window)
+                window.destroy()
+
+            ttk.Button(window, text="Excluir selecionada", command=delete_draft,
+                       style="Secondary.TButton").pack(pady=(0, 12))
+
+    def show_cloud_conflicts(self):
+        conflicts = self.sync_manager.conflicts() if self.sync_manager else []
+        if not conflicts:
+            messagebox.showinfo("Sem conflitos", "Nenhuma alteração precisa de revisão.")
+            return
+        window = tk.Toplevel(self)
+        window.title("Revisar conflitos")
+        window.geometry("700x400")
+        window.configure(bg=COLORS["app_bg"])
+        tk.Label(window, text="As alterações deste computador estão protegidas e não sobrescreveram o banco. "
+                 "Se precisar conservar essa versão, abra a planilha ou o histórico e exporte para Excel antes de descartar.",
+                 bg=COLORS["app_bg"], fg=COLORS["warning_text"], wraplength=650,
+                 font=("Segoe UI Semibold", 11)).pack(padx=18, pady=16)
+        tree = ttk.Treeview(window, columns=("id", "reason"), show="headings", selectmode="browse")
+        tree.heading("id", text="Live")
+        tree.heading("reason", text="Motivo")
+        tree.pack(fill="both", expand=True, padx=18)
+        reasons = {
+            "versao": "Alterada em outro computador",
+            "excluida": "Excluída no Supabase",
+            "migracao": "Backup diferente da versão no Supabase",
+        }
+        for index, conflict in enumerate(conflicts):
+            tree.insert("", "end", iid=str(index), values=(conflict["id"],
+                        reasons.get(conflict.get("motivo"), "Alteração em outro computador")))
+
+        def discard():
+            selected = tree.selection()
+            if not selected:
+                return
+            conflict_id = conflicts[int(selected[0])]["id"]
+            if not messagebox.askyesno(
+                "Descartar alterações deste computador?",
+                "Isso descarta as alterações pendentes desta live neste computador e mantém a versão do Supabase. "
+                "Não será possível recuperar essas alterações pela fila. Deseja continuar?", parent=window,
+            ):
+                return
+            if not self.sync_manager.discard_conflict(conflict_id):
+                messagebox.showerror("Não foi possível descartar", "A fila protegida não pôde ser atualizada. Tente novamente.", parent=window)
+                return
+            if self.live_id == conflict_id:
+                document = self.sync_manager.remote_document(conflict_id) or {}
+                state = document.get("estado")
+                self._apply_saved_state(state or {})
+                if state is None:
+                    live = document.get("historico")
+                    if live is not None:
+                        self._load_history_live_into_main_sheet(live)
+            window.destroy()
+            self.sync_manager.sync_now()
+
+        ttk.Button(window, text="Descartar minha alteração e usar Supabase", command=discard,
+                   style="Secondary.TButton").pack(pady=15)
+
     def show_history(self):
         lives = self._read_history()
+        if self.sync_manager:
+            self.sync_manager.sync_now()
         window = tk.Toplevel(self)
         window.title("Histórico de lives - IoMarques Brechó")
         window.geometry("1000x520")
@@ -2669,9 +2883,16 @@ class LiveSalesApp(tk.Tk):
         def refresh_actions(_event=None):
             state = "!disabled" if selected_live() is not None else "disabled"
             open_button.state([state])
-            delete_button.state([state])
+            admin = bool(self.sync_manager and self.sync_manager.is_admin)
+            delete_button.state([state if admin else "disabled"])
+            if admin:
+                delete_button.pack(side="right")
+            else:
+                delete_button.pack_forget()
 
         def refresh_empty_state():
+            empty.configure(text="Nenhuma live finalizada ainda." if self.sync_manager and self.sync_manager.cloud_loaded
+                            else "Conecte ao Supabase e aguarde o carregamento do histórico.")
             if lives:
                 empty.place_forget()
             else:
@@ -2679,6 +2900,10 @@ class LiveSalesApp(tk.Tk):
             refresh_actions()
 
         def populate_history():
+            nonlocal lives
+            selected = selected_live()
+            selected_id = selected.get("id") if selected else None
+            lives = self._read_history()
             expanded = {item: tree.item(item, "open") for item in tree.get_children()}
             if expanded:
                 tree.delete(*expanded)
@@ -2717,14 +2942,22 @@ class LiveSalesApp(tk.Tk):
                             self._history_commission_value(live),
                         ),
                     )
+                    if live.get("id") == selected_id:
+                        tree.selection_set(item_id)
             refresh_empty_state()
 
         def delete_selected_history():
             nonlocal lives
 
+            if not self.sync_manager or not self.sync_manager.is_admin:
+                return
+
             live = selected_live()
             if live is None:
                 messagebox.showinfo("Selecione uma live", "Escolha uma live do histórico para excluir.")
+                return
+            if live.get("id") == self.live_id:
+                messagebox.showwarning("Planilha aberta", "Use 'Nova live' para fechar esta planilha antes de excluí-la.", parent=window)
                 return
 
             finished_at = self._format_history_datetime(live.get("finished_at", "")) or "data não informada"
@@ -2733,7 +2966,8 @@ class LiveSalesApp(tk.Tk):
                 "Excluir live do histórico?",
                 (
                     f"Excluir a live finalizada em {finished_at}, com total {total}?\n\n"
-                    "Essa ação remove apenas o registro do histórico."
+                    "Essa ação exclui a live, suas peças e os dados vinculados no Supabase. "
+                    "Ela só desaparece desta lista depois da confirmação do banco."
                 ),
             )
             if not answer:
@@ -2753,7 +2987,10 @@ class LiveSalesApp(tk.Tk):
                     lives.append(record)
 
             deleted_ids = [live_id] if live_id else []
-            self._write_history(lives, deleted_live_ids=deleted_ids)
+            if not self._write_history(lives, deleted_live_ids=deleted_ids):
+                messagebox.showerror("Não foi possível solicitar a exclusão", "Verifique a conexão e seu acesso de administrador.", parent=window)
+                return
+            messagebox.showinfo("Exclusão solicitada", "Aguardando confirmação do Supabase. A lista será atualizada automaticamente.", parent=window)
             populate_history()
 
         def open_selected_history():
@@ -2778,7 +3015,9 @@ class LiveSalesApp(tk.Tk):
             command=delete_selected_history,
             style="Secondary.TButton",
         )
-        delete_button.pack(side="right")
+
+        ttk.Button(actions, text="Atualizar", command=self.sync_manager.sync_now if self.sync_manager else lambda: None,
+                   style="Secondary.TButton").pack(side="left", padx=8)
 
         def double_click_history(event):
             item_id = tree.identify_row(event.y)
@@ -2800,6 +3039,8 @@ class LiveSalesApp(tk.Tk):
         tree.bind("<Return>", activate_history)
         tree.bind("<Delete>", lambda _event: delete_selected_history() if selected_live() is not None else None)
 
+        self.history_refreshers[window] = populate_history
+        window.bind("<Destroy>", lambda event: self.history_refreshers.pop(window, None) if event.widget is window else None)
         populate_history()
 
     def _load_history_live_into_main_sheet(self, live):
@@ -2824,49 +3065,26 @@ class LiveSalesApp(tk.Tk):
                 "Planilha principal ocupada",
                 (
                     "A planilha principal já tem dados.\n\n"
-                    "Use 'Nova live / Limpar tudo' antes de abrir uma live do histórico."
+                    "Use 'Nova live' antes de abrir uma live do histórico."
                 ),
             )
             return False
 
-        self.live_running = False
-        self.live_id = live.get("id") or None
-        self.live_first_started_at = self._parse_history_datetime(live.get("started_at", ""))
-        self.live_started_at = None
-        self.live_finished_at = self._parse_history_datetime(live.get("finished_at", ""))
-        self.live_elapsed_seconds = self._history_elapsed_seconds(live)
-        self.undo_stack.clear()
-        self.redo_stack.clear()
+        self._apply_saved_state({
+            "live": {
+                "id": live.get("id"), "running": False,
+                "first_started_at": live.get("started_at"), "started_at": None,
+                "finished_at": live.get("finished_at"),
+                "elapsed_seconds": self._history_elapsed_seconds(live),
+            },
+            "rows": rows,
+        }, history=live)
         self.search_var.set("")
         self._hide_search()
         for var in self.filter_vars:
             var.set("")
-
-        for child in self.body_frame.winfo_children():
-            child.destroy()
-        self.row_vars.clear()
-        self.index_frames.clear()
-        self.index_labels.clear()
-        self.time_check_vars.clear()
-        self.time_check_buttons.clear()
-        self.manual_time_vars.clear()
-        self.cell_frames.clear()
-        self.cell_entries.clear()
-        self.clear_buttons.clear()
-        self.active_cell = None
-        self.hovered_cell = None
-
-        for row in rows:
-            values = [self._saved_row_value(row, column) for column in COLUMNS]
-            values[VALUE_COL] = self._format_money_input(values[VALUE_COL])
-            self._add_row(values)
-
-        self._ensure_blank_row()
-        self._refresh_totals()
-        self._refresh_live_controls()
         self._apply_filters()
         self.canvas.yview_moveto(0)
-        self._save_rows(force_snapshot=True)
         return True
 
     def _history_elapsed_seconds(self, live):
@@ -2950,11 +3168,13 @@ class LiveSalesApp(tk.Tk):
         return parsed.strftime("%d/%m/%Y %H:%M") if parsed else value
 
     def start_live(self):
-        if self.live_running:
+        if (self.live_running or not self.sync_manager or not self.sync_manager.ready
+                or (self.live_id and self.sync_manager.is_deleted(self.live_id))):
             return
         now = datetime.now()
         if not self.live_id:
-            self.live_id = f"live_{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+            self.live_id = f"live_{uuid.uuid4().hex}"
+            self.sync_manager.begin_edit(self.live_id)
         if self.live_first_started_at is None:
             self.live_first_started_at = now
         self.live_started_at = now
@@ -2965,7 +3185,7 @@ class LiveSalesApp(tk.Tk):
         self._schedule_timer_tick()
 
     def finish_live(self):
-        if not self.live_running:
+        if not self.live_running or (self.live_id and self.sync_manager.is_deleted(self.live_id)):
             return
         answer = messagebox.askyesno(
             "Finalizar live?",
@@ -2982,8 +3202,7 @@ class LiveSalesApp(tk.Tk):
             self.after_cancel(self.timer_job)
             self.timer_job = None
         self._refresh_live_controls()
-        self._save_rows(force_snapshot=True)
-        self._upsert_current_live_history(finished_at)
+        self._save_rows()
 
     def _refresh_live_controls(self):
         elapsed = self._current_elapsed_seconds()
@@ -3012,6 +3231,7 @@ class LiveSalesApp(tk.Tk):
             self.start_button.state(["!disabled"])
             self.finish_button.state(["disabled"])
         self._refresh_duplicate_code_alert()
+        self._refresh_cloud_editability()
 
     def _current_live_status(self):
         if self.live_running:
@@ -3034,7 +3254,8 @@ class LiveSalesApp(tk.Tk):
     def _current_elapsed_seconds(self):
         elapsed = self.live_elapsed_seconds
         if self.live_running and self.live_started_at is not None:
-            elapsed += max(0, int((datetime.now() - self.live_started_at).total_seconds()))
+            now = datetime.now(self.live_started_at.tzinfo)
+            elapsed += max(0, int((now - self.live_started_at).total_seconds()))
         return elapsed
 
     def _format_elapsed(self, seconds):
@@ -3238,15 +3459,7 @@ class LiveSalesApp(tk.Tk):
         self._launch_message_automation(automation_app, queue_path)
 
     def _message_automation_app_path(self):
-        candidates = [
-            Path.home() / "iomarques-instagram-direct" / "app.py",
-            APP_DIR.parent / "iomarques-instagram-direct" / "app.py",
-            APP_DIR.parent.parent / "iomarques-instagram-direct" / "app.py",
-        ]
-        for candidate in candidates:
-            if candidate.exists():
-                return candidate
-        return None
+        return find_message_automation_app(APP_DIR, Path.home())
 
     def _launch_message_automation(self, automation_app, queue_path):
         app_args = [str(automation_app), "--queue-file", str(queue_path)]
@@ -4285,42 +4498,20 @@ class LiveSalesApp(tk.Tk):
 
     def clear_all(self):
         self._finish_active_cell()
+        if self.live_running and not (self.live_id and self.sync_manager.is_deleted(self.live_id)):
+            messagebox.showwarning("Live em andamento", "Finalize a live antes de abrir uma nova planilha.")
+            return
         answer = messagebox.askyesno(
             "Começar nova live?",
-            "Isso apaga todos os dados da tabela atual, o cronômetro e o salvamento automático. Deseja limpar tudo?",
+            "A planilha atual será guardada e uma nova será aberta. "
+            "O histórico e os rascunhos não serão excluídos do Supabase. Continuar?",
         )
         if not answer:
             return
 
-        self._save_rows(force_snapshot=True)
-
-        if self.timer_job is not None:
-            self.after_cancel(self.timer_job)
-            self.timer_job = None
-        self.live_running = False
-        self.live_id = None
-        self.live_first_started_at = None
-        self.live_started_at = None
-        self.live_finished_at = None
-        self.live_elapsed_seconds = 0
-
-        for child in self.body_frame.winfo_children():
-            child.destroy()
-        self.row_vars.clear()
-        self.index_frames.clear()
-        self.index_labels.clear()
-        self.time_check_vars.clear()
-        self.time_check_buttons.clear()
-        self.manual_time_vars.clear()
-        self.cell_frames.clear()
-        self.cell_entries.clear()
-        self.clear_buttons.clear()
-        self.active_cell = None
-        self.hovered_cell = None
-        self._add_row()
-        self._refresh_totals()
-        self._refresh_live_controls()
-        self._save_rows()
+        if not self._save_rows():
+            return
+        self._apply_saved_state({})
 
     def _finish_active_cell(self):
         if self.active_cell and self._cell_exists(*self.active_cell):
@@ -4328,16 +4519,67 @@ class LiveSalesApp(tk.Tk):
 
     def _on_close(self):
         self._finish_active_cell()
-        self._save_rows(force_snapshot=True)
+        saved = self._save_rows(show_error=False)
+        if not saved:
+            if not messagebox.askyesno(
+                "Alterações sem proteção",
+                "Não foi possível guardar as últimas alterações. Fechar agora pode perdê-las. "
+                "Deseja descartá-las e fechar mesmo assim?", default="no",
+            ):
+                return
+        elif self.sync_manager and self.sync_manager.has_pending:
+            if not messagebox.askyesno(
+                "Ainda há envios pendentes",
+                "As alterações ainda não foram confirmadas pelo Supabase. "
+                "Elas estão na fila protegida deste computador e serão recuperadas ao reabrir. "
+                "Deseja fechar agora?", default="no",
+            ):
+                return
+        self.closing = True
         if self.timer_job is not None:
             self.after_cancel(self.timer_job)
         if self.autosave_job is not None:
             self.after_cancel(self.autosave_job)
+        if self.cloud_poll_job is not None:
+            self.after_cancel(self.cloud_poll_job)
         if self.sync_manager is not None:
             self.sync_manager.shutdown()
         self.destroy()
 
 
+def verify_installation():
+    """Offline packaging check: never instantiate CloudLiveStore or migrate data."""
+    import fitz
+    from PIL import Image
+    from supabase_sync import load_sync_config
+
+    if Workbook is None or load_sync_config(APP_DIR, RESOURCE_DIR) is None:
+        return 1
+    for filename in ("logo_round.png", "app_icon.ico", DELIVERY_PRINT_ASSET, EVALUATION_PRINT_ASSET):
+        if not (ASSETS_DIR / filename).is_file():
+            return 1
+    with Image.open(ASSETS_DIR / DELIVERY_PRINT_ASSET) as picture:
+        picture.verify()
+    with fitz.open(ASSETS_DIR / EVALUATION_PRINT_ASSET) as document:
+        if document.page_count < 1:
+            return 1
+    window = tk.Tk()
+    window.withdraw()
+    try:
+        tk.PhotoImage(master=window, file=str(ASSETS_DIR / "logo_round.png"))
+    finally:
+        window.destroy()
+    return 0
+
+
 if __name__ == "__main__":
+    if "--verificar-instalacao" in sys.argv:
+        try:
+            verification_result = verify_installation()
+        except Exception:
+            # A failed frozen check must return to the installer, not leave a
+            # PyInstaller error dialog waiting for input in a hidden process.
+            verification_result = 1
+        raise SystemExit(verification_result)
     app = LiveSalesApp()
     app.mainloop()

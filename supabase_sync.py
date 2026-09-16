@@ -7,20 +7,26 @@ import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from pathlib import Path
 
 
 CONFIG_FILENAME = "integracao_supabase.json"
 LOCAL_CONFIG_FILENAME = "integracao_supabase.local.json"
+PUBLIC_CONFIG_FILENAME = "config_publica.json"
 SESSION_FILENAME = "integracao_sessao.dat"
 QUEUE_FILENAME = "integracao_pendencias.json"
 MAX_BATCH_SIZE = 100
 RETRY_SECONDS = 30
+MAX_TOTAL_CENTS = 999_999_999_999
+MAX_PIECE_CENTS = 999_999_999
+MAX_PIECES = 1_000_000
+STORE_TIMEZONE = timezone(timedelta(hours=-3))
 
 
 class SyncError(Exception):
@@ -44,17 +50,17 @@ class SyncConfig:
 
 def _read_json(path):
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
         return value if isinstance(value, dict) else None
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
 
 
 def _read_dotenv(path):
     values = {}
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
+        lines = path.read_text(encoding="utf-8-sig").splitlines()
+    except (OSError, UnicodeDecodeError):
         return values
 
     for line in lines:
@@ -73,14 +79,52 @@ def _validated_config(value):
     if not isinstance(value, dict):
         return None
 
-    url = str(value.get("supabase_url", "") or "").strip().rstrip("/")
-    key = str(value.get("supabase_publishable_key", "") or "").strip()
-    email_base = str(value.get("auth_email_base", "") or "").strip()
+    fields = ("supabase_url", "supabase_publishable_key", "auth_email_base")
+    if any(not isinstance(value.get(field), str) for field in fields):
+        return None
+    url = value["supabase_url"].strip().rstrip("/")
+    key = value["supabase_publishable_key"].strip()
+    email_base = value["auth_email_base"].strip()
 
-    if not url.startswith("https://") or not key or "@" not in email_base:
+    try:
+        parsed = urllib.parse.urlsplit(url)
+        valid_url = (
+            parsed.scheme == "https"
+            and bool(parsed.hostname)
+            and parsed.username is None
+            and parsed.password is None
+            and not re.search(r"\s", url)
+            and not parsed.path
+            and not parsed.query
+            and not parsed.fragment
+            and re.fullmatch(r"[a-zA-Z0-9.-]+", parsed.hostname) is not None
+            and parsed.port in {None, 443}
+        )
+    except ValueError:
+        return None
+
+    if not valid_url or not re.fullmatch(r"[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+", email_base):
+        return None
+    if not _is_public_key(key):
         return None
 
     return SyncConfig(url=url, publishable_key=key, auth_email_base=email_base)
+
+
+def _is_public_key(key):
+    """Only client-side Supabase keys may be shipped with the desktop app."""
+    if re.fullmatch(r"sb_publishable_[A-Za-z0-9_-]{20,}", key):
+        return True
+    if len(key) > 8192 or not re.fullmatch(r"[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", key):
+        return False
+    try:
+        encoded = key.split(".")[1]
+        payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    # An anon JWT is a public API key. service_role and signed-in user JWTs
+    # must never be packaged, even if accidentally supplied as a public key.
+    return isinstance(payload, dict) and payload.get("role") == "anon"
 
 
 def load_sync_config(app_dir, source_dir=None):
@@ -98,6 +142,10 @@ def load_sync_config(app_dir, source_dir=None):
             ]
         )
 
+    candidates.append(app_dir / PUBLIC_CONFIG_FILENAME)
+    if source_dir and source_dir != app_dir:
+        candidates.append(source_dir / PUBLIC_CONFIG_FILENAME)
+
     environment = {
         "supabase_url": os.environ.get("IOMARQUES_SUPABASE_URL", ""),
         "supabase_publishable_key": os.environ.get(
@@ -105,11 +153,14 @@ def load_sync_config(app_dir, source_dir=None):
         ),
         "auth_email_base": os.environ.get("IOMARQUES_AUTH_EMAIL_BASE", ""),
     }
-    configured = _validated_config(environment)
-    if configured:
-        return configured
+    if any(environment.values()):
+        # Explicit overrides fail closed. A misspelled or privileged key must
+        # not silently connect the app to a different fallback project.
+        return _validated_config(environment)
 
     for path in candidates:
+        if not path.is_file():
+            continue
         if path.name == ".env.local":
             dotenv = _read_dotenv(path)
             value = {
@@ -122,9 +173,7 @@ def load_sync_config(app_dir, source_dir=None):
         else:
             value = _read_json(path)
 
-        configured = _validated_config(value)
-        if configured:
-            return configured
+        return _validated_config(value)
 
     return None
 
@@ -227,54 +276,120 @@ def _unprotect_windows(data):
         kernel32.LocalFree(result.pbData)
 
 
+def _text(value):
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
 def _parse_duration(value):
-    parts = str(value or "").strip().split(":")
-    if len(parts) != 3:
+    matched = re.fullmatch(r"([0-9]+):([0-5][0-9]):([0-5][0-9])", _text(value))
+    if matched is None:
         return None
     try:
-        hours, minutes, seconds = [int(part) for part in parts]
+        hours, minutes, seconds = [int(part) for part in matched.groups()]
     except ValueError:
-        return None
-    if hours < 0 or not 0 <= minutes < 60 or not 0 <= seconds < 60:
         return None
     total = hours * 3600 + minutes * 60 + seconds
     return total if total <= 86400 else None
 
 
 def _parse_timestamp(value):
-    try:
-        parsed = datetime.fromisoformat(str(value or "").strip())
-    except ValueError:
+    text = _text(value)
+    if not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}(?:[T ][0-9]{2}:[0-9]{2}"
+        r"(?::[0-9]{2}(?:\.[0-9]{1,6})?)?)?(?:Z|[+-][0-9]{2}:[0-9]{2})?",
+        text,
+        flags=re.IGNORECASE,
+    ):
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.astimezone()
-    return parsed.astimezone(timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(text.replace("z", "Z"))
+        if parsed.tzinfo is None:
+            # Os backups usam o horário local da loja, não o fuso do computador
+            # que por acaso está importando o arquivo.
+            parsed = parsed.replace(tzinfo=STORE_TIMEZONE)
+        return parsed.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
+        return None
 
 
-def _parse_money_cents(value):
-    text = str(value or "").strip()
+def _parse_money_cents(value, maximum=MAX_PIECE_CENTS):
+    text = _text(value)
     if not text:
         return None
-    clean = text.lower().replace("r$", "").replace(" ", "")
+    clean = re.sub(r"\s", "", text.lower().replace("r$", ""))
     if "," in clean:
+        if not re.fullmatch(r"(?:\d+|\d{1,3}(?:\.\d{3})+),\d{1,2}", clean):
+            return None
         clean = clean.replace(".", "").replace(",", ".")
-    elif clean.count(".") > 1:
+    elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+", clean):
         clean = clean.replace(".", "")
+    elif not re.fullmatch(r"\d+(?:\.\d{1,2})?", clean):
+        return None
     try:
         amount = Decimal(clean)
-    except InvalidOperation:
+        if not amount.is_finite() or amount < 0 or amount > Decimal(maximum) / 100:
+            return None
+        cents = int((amount * 100).quantize(Decimal("1"), rounding=ROUND_HALF_EVEN))
+    except (InvalidOperation, ValueError, OverflowError):
         return None
-    if amount < 0:
+    return cents if cents <= maximum else None
+
+
+def _parse_count(value):
+    if isinstance(value, bool):
         return None
-    cents = int((amount * 100).quantize(Decimal("1")))
-    return cents if cents <= 999_999_999 else None
+    if isinstance(value, float):
+        if not value.is_integer() or not 0 <= value <= MAX_PIECES:
+            return None
+        return int(value)
+    if not re.fullmatch(r"[0-9]+", _text(value)):
+        return None
+    try:
+        count = int(_text(value))
+        return count if count <= MAX_PIECES else None
+    except (ValueError, OverflowError):
+        return None
+
+
+def _history_summary(live, rows):
+    total_value = live.get("total")
+    total = None
+    if total_value is not None and str(total_value).strip():
+        total = _parse_money_cents(total_value, MAX_TOTAL_CENTS)
+    elif rows is not None:
+        sold_values = [
+            _parse_money_cents(row.get("valor"), MAX_TOTAL_CENTS)
+            for row in rows
+            if isinstance(row, dict) and _text(row.get("cliente"))
+        ]
+        if all(value is not None for value in sold_values):
+            amount = sum(sold_values)
+            total = amount if amount <= MAX_TOTAL_CENTS else None
+
+    pieces_value = live.get("pieces_count")
+    sold_value = live.get("sold_count")
+    pieces = _parse_count(pieces_value)
+    sold = _parse_count(sold_value)
+    if rows is not None:
+        if pieces_value is None or str(pieces_value).strip() == "":
+            pieces = _parse_count(len(rows))
+        if sold_value is None or str(sold_value).strip() == "":
+            sold = _parse_count(sum(
+                bool(_text(row.get("cliente")))
+                for row in rows if isinstance(row, dict)
+            ))
+    return total, pieces, sold
 
 
 def prepare_live_payload(live):
-    if not isinstance(live, dict) or not isinstance(live.get("rows"), list):
+    if not isinstance(live, dict):
         return None
 
-    live_id = str(live.get("id", "") or "").strip()
+    live_id = _text(live.get("id"))
     started_at = _parse_timestamp(live.get("started_at"))
     finished_at = _parse_timestamp(live.get("finished_at"))
     if not live_id or len(live_id) > 200 or not started_at or not finished_at:
@@ -284,17 +399,19 @@ def prepare_live_payload(live):
 
     duration = _parse_duration(live.get("duration"))
     if duration is None:
-        duration = max(0, round((finished_at - started_at).total_seconds()))
+        duration = int((finished_at - started_at).total_seconds() + 0.5)
     if duration > 86400:
         return None
 
+    rows = live.get("rows") if isinstance(live.get("rows"), list) else None
+    total, pieces, sold = _history_summary(live, rows)
     unsold = []
-    for index, row in enumerate(live["rows"]):
+    for index, row in enumerate(rows or []):
         if not isinstance(row, dict):
             continue
-        value_text = str(row.get("valor", "") or "").strip()
-        code = str(row.get("codigo", "") or "").strip()
-        client = str(row.get("cliente", "") or "").strip()
+        value_text = _text(row.get("valor"))
+        code = _text(row.get("codigo"))
+        client = _text(row.get("cliente"))
         if client or (not value_text and not code):
             continue
         unsold.append(
@@ -312,6 +429,10 @@ def prepare_live_payload(live):
         "iniciada_em": started_at.isoformat(),
         "finalizada_em": finished_at.isoformat(),
         "duracao_segundos": duration,
+        "total_vendido_centavos": total,
+        "total_pecas": pieces,
+        "pecas_vendidas": sold,
+        "possui_detalhamento": rows is not None,
         "pecas": unsold,
     }
 
@@ -362,7 +483,7 @@ class SupabaseHistorySync:
             self._emit("not_configured", "A integração do Supabase não foi configurada neste app.")
             return
         if not self.is_authenticated:
-            self._emit("auth_required", "Entre para enviar as peças não vendidas automaticamente.")
+            self._emit("auth_required", "Entre para enviar o histórico e as peças não vendidas automaticamente.")
             return
         self._emit("pending", "Verificando envios pendentes.")
         self._schedule_flush(0.2)
@@ -520,7 +641,7 @@ class SupabaseHistorySync:
                     "A atualização da integração ainda não foi aplicada no Supabase."
                 ) from exc
             raise SyncTemporaryError(
-                "O servidor não conseguiu receber as peças não vendidas."
+                "O servidor não conseguiu receber o histórico das lives."
             ) from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise SyncTemporaryError(
@@ -588,7 +709,7 @@ class SupabaseHistorySync:
             self.flushing = True
 
         try:
-            self._emit("syncing", "Enviando somente as peças não vendidas.")
+            self._emit("syncing", "Enviando os totais das lives e as peças não vendidas.")
             while True:
                 with self.lock:
                     items = list(self.pending_lives.items())[:MAX_BATCH_SIZE]
@@ -596,9 +717,9 @@ class SupabaseHistorySync:
                     break
                 payload = [item[1] for item in items]
                 confirmed = self._rpc(
-                    "importar_lives_nao_vendidas", {"p_lives": payload}
+                    "importar_historico_lives", {"p_lives": payload}
                 )
-                if confirmed != len(payload):
+                if type(confirmed) is not int or confirmed != len(payload):
                     raise SyncTemporaryError("O servidor não confirmou todo o envio.")
                 with self.lock:
                     for live_id, sent in items:
@@ -620,7 +741,7 @@ class SupabaseHistorySync:
                     self.pending_deletions.discard(live_id)
                     self._save_queue_locked()
 
-            self._emit("synced", "Peças não vendidas sincronizadas.")
+            self._emit("synced", "Histórico e peças não vendidas sincronizados.")
         except SyncAuthError as exc:
             with self.lock:
                 self.session = None

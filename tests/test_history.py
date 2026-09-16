@@ -68,10 +68,15 @@ class HistoryWindowTests(unittest.TestCase):
         self.addCleanup(self.app.destroy)
         self.app.withdraw()
         self.app._setup_style()
+        self.app.sync_manager = Mock(is_admin=True, cloud_loaded=True)
+        self.app.history_refreshers = {}
+        self.app.live_id = None
         self.app._read_history = Mock(side_effect=lambda: list(self.lives))
-        self.app._write_history = Mock(
-            side_effect=lambda lives, deleted_live_ids=None: self.lives.__setitem__(slice(None), lives)
-        )
+        def confirm_write(lives, deleted_live_ids=None):
+            # Este teste trata do agrupamento depois do ACK, sem banco real.
+            self.lives[:] = lives
+            return True
+        self.app._write_history = Mock(side_effect=confirm_write)
         self.app._load_history_live_into_main_sheet = Mock(return_value=False)
 
     def open_history(self):
@@ -114,8 +119,9 @@ class HistoryWindowTests(unittest.TestCase):
         self.open_button.invoke()
         self.app._load_history_live_into_main_sheet.assert_called_once_with(self.lives[0])
 
+    @patch("app.messagebox.showinfo")
     @patch("app.messagebox.askyesno", return_value=True)
-    def test_deletion_recalculates_month_and_removes_empty_month(self, confirm):
+    def test_deletion_recalculates_month_and_removes_empty_month(self, confirm, _info):
         self.open_history()
         self.tree.item("month_2026_8", open=False)
         self.select("month_2026_9_live_0")
