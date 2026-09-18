@@ -30,7 +30,7 @@ except ImportError:
 from roguelike_game import RogueBrechoGame
 
 
-APP_VERSION = "1.7"
+APP_VERSION = "1.7.1"
 
 COLUMNS = ("valor", "codigo", "cliente", "suplente", "tempo")
 HEADERS = {
@@ -3384,13 +3384,15 @@ class LiveSalesApp(tk.Tk):
             lines.append("")
         return "\n".join(lines) + "\n"
 
-    def _client_message_text(self, items):
+    def _client_message_text(self, items, cliente):
         subtotal = sum((item["valor"] for item in items), Decimal("0"))
         piece_lines = []
         for item in items:
             codigo = item["codigo"] or "sem código"
             piece_lines.append(f"- Peça {codigo}: {self._format_money(item['valor'])}")
         lines = [
+            cliente,
+            "",
             "Oi amada!😃",
             "Você arrematou na LIVE ",
             "as seguintes peças:",
@@ -3415,7 +3417,8 @@ class LiveSalesApp(tk.Tk):
 
         messages = []
         for cliente, items in summary.items():
-            messages.append((cliente, self._client_message_text(items)))
+            instagram = f"@{cliente.strip().lstrip('@').strip()}"
+            messages.append((instagram, self._client_message_text(items, instagram)))
         return messages
 
     def _client_messages_text(self):

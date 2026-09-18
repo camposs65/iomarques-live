@@ -1,4 +1,4 @@
-# IoMarques Brechó — Controle de Vendas da Live · v1.7
+# IoMarques Brechó — Controle de Vendas da Live · v1.7.1
 
 Aplicativo para Windows usado para anotar as peças durante as lives no Instagram. O Supabase guarda a live em andamento e o histórico completo; a instalação prepara o programa e cria o atalho na Área de Trabalho.
 
@@ -111,7 +111,7 @@ Depois de finalizar:
 - `Histórico de lives`: agrupa as lives por mês e ano de finalização, com os meses mais recentes primeiro. Cada mês mostra a soma do total vendido e dos 10% das suas lives. Use a setinha do mês para recolher ou expandir as lives, que continuam mostrando duração, peças, clientes, total e 10% individuais. Registros sem data de finalização usam a data de início; sem nenhuma data válida, ficam em `Sem data`. Somente administradores podem excluir uma live; a exclusão confirmada remove seus dados completos e o resumo no banco, recalculando as somas do mês.
 - `Histórico de lives`: use `Abrir na planilha principal` ou dê dois cliques para carregar a planilha daquela live na tela principal quando ela tiver dados detalhados salvos. O app bloqueia essa abertura se houver uma live em andamento ou dados já preenchidos na planilha principal.
 - `Resumo final`: mostra cada cliente em destaque, os códigos das peças, tempos, suplentes, checkbox por peça e total da cliente. No final, mostra clientes, peças vendidas e total vendido.
-- `Mensagens clientes`: cria mensagens prontas para enviar às clientes com peças arrematadas, total e instruções de pagamento.
+- `Mensagens clientes`: mostra o `@` de cada cliente na lista e no início da mensagem copiada, seguido das peças arrematadas, total e instruções de pagamento. O prefixo não é duplicado quando o nome já foi preenchido com `@`.
 - `Exportar Excel`: cria um `.xlsx` com índice das peças, filtros nas colunas e as abas `Vendas`, `Resumo por cliente`, `Suplentes`, `Dados da live` e `Histórico de lives`.
 - `Imprimir todos`: envia o resumo, a planilha e as peças não vendidas para a impressora padrão, ignorando automaticamente os itens que não tiverem dados.
 - `Imprimir resumo`: envia um resumo por cliente com checkbox, nome da cliente em negrito, suplente na mesma linha da peça e totais finais. Quando não couber em uma folha, continua em páginas seguintes com fonte legível.

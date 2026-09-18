@@ -31,7 +31,7 @@ class InstallationPathsTests(unittest.TestCase):
         return find_message_automation_app(self.app_dir, self.user_home)
 
     def test_version_updated(self):
-        self.assertEqual(APP_VERSION, "1.7")
+        self.assertEqual(APP_VERSION, "1.7.1")
 
     def test_no_companion_returns_none(self):
         self.assertIsNone(self.find())
