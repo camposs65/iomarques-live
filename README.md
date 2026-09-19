@@ -1,4 +1,4 @@
-# IoMarques Brechó — Controle de Vendas da Live · v1.7.1
+# IoMarques Brechó — Controle de Vendas da Live · v1.7.2
 
 Aplicativo para Windows usado para anotar as peças durante as lives no Instagram. O Supabase guarda a live em andamento e o histórico completo; a instalação prepara o programa e cria o atalho na Área de Trabalho.
 
@@ -72,7 +72,7 @@ Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-public
 - Abra o botão de conexão/sincronização e entre com o mesmo usuário e senha do aplicativo Controle do Brechó.
 - A senha não é armazenada. Depois do primeiro acesso, somente a sessão é guardada criptografada pelo Windows.
 - O app salva o estado da live em andamento, cronômetro, ordem e conteúdo completo das peças: valor, código, cliente, suplente e tempo. Ao finalizar, salva também o histórico, os totais e as contagens.
-- O Controle do Brechó mostra todas as lives e o total vendido e os 10% por live e por mês. Os 10% de cada live são calculados no servidor com o mesmo arredondamento do histórico desktop; o resumo mensal soma esses valores individuais.
+- O valor da coluna `10% + R$ 50` corresponde a 10% do total vendido, arredondado em centavos, mais R$ 50,00 por live. A regra vale também para todas as lives antigas, sem alterar o total vendido nem os dados das peças. O resumo mensal soma os valores individuais, incluindo R$ 50,00 para cada live do mês. Exemplo: uma live de R$ 1.000,00 resulta em R$ 150,00. O Controle do Brechó calcula esse valor no Supabase com o mesmo arredondamento do histórico desktop.
 - Clientes, suplentes e detalhes das vendidas passam a integrar os dados protegidos do desktop no Supabase. A tela de recortes da PWA continua recebendo apenas os resumos e as não vendidas. Esses dados não são ligados automaticamente aos cadastros do controle operacional.
 - Os jogos continuam funcionando em memória, sem saves ou recordes persistidos. O vídeo nunca passa pelo desktop nem pelo Supabase. Exportações, impressão e arquivos temporários da automação de mensagens continuam sendo ações locais separadas.
 - Lives antigas com apenas resumo também são enviadas, quando têm ID e datas válidas. Valores ausentes ou inválidos ficam como não informados, nunca como uma venda de valor zero. Lives com todas as peças vendidas continuam aparecendo no histórico.
@@ -86,6 +86,8 @@ Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-public
 - A importação manual de `historico_lives.json` na PWA continua disponível como alternativa, inclusive para o backup trazido da loja. A importação utiliza os mesmos resumos e não envia os nomes das clientes.
 
 A estrutura de nuvem depende da migration `supabase/migrations/20260917000200_dados_completos_app_live.sql` do projeto `brecho-controle` e das migrations anteriores. Essa preparação é feita pelo responsável pelo banco, não pelo instalador. Sem a estrutura necessária, o aplicativo não confirma a gravação na nuvem. As importações antigas não podem sobrescrever os resumos das lives já gerenciadas pela versão com dados completos.
+
+Para manter a comissão igual no Controle do Brechó e no desktop v1.7.2, aplique também `supabase/migrations/20260918000100_comissao_live_adicional.sql` no projeto `brecho-controle`. A migration recalcula a coluna de comissão das lives existentes e futuras; não é necessário reenviar históricos nem alterar os totais vendidos.
 
 ### Configuração da conexão
 
@@ -108,7 +110,7 @@ Exemplo da IoMarques Brechó:
 Depois de finalizar:
 
 - `Ações da live`: abre um menu limpo com `Resumo final`, `Mensagens clientes`, `Exportar Excel`, `Imprimir todos`, `Imprimir resumo`, `Imprimir planilha`, `Imprimir não vendidas` e `Histórico de lives`.
-- `Histórico de lives`: agrupa as lives por mês e ano de finalização, com os meses mais recentes primeiro. Cada mês mostra a soma do total vendido e dos 10% das suas lives. Use a setinha do mês para recolher ou expandir as lives, que continuam mostrando duração, peças, clientes, total e 10% individuais. Registros sem data de finalização usam a data de início; sem nenhuma data válida, ficam em `Sem data`. Somente administradores podem excluir uma live; a exclusão confirmada remove seus dados completos e o resumo no banco, recalculando as somas do mês.
+- `Histórico de lives`: agrupa as lives por mês e ano de finalização, com os meses mais recentes primeiro. Cada mês mostra a soma do total vendido e a soma de `10% + R$ 50` de cada live. Use a setinha do mês para recolher ou expandir as lives, que continuam mostrando duração, peças, clientes, total e comissão individuais. A mesma regra aparece na exportação Excel. Registros sem data de finalização usam a data de início; sem nenhuma data válida, ficam em `Sem data`. Somente administradores podem excluir uma live; a exclusão confirmada remove seus dados completos e o resumo no banco, recalculando as somas do mês.
 - `Histórico de lives`: use `Abrir na planilha principal` ou dê dois cliques para carregar a planilha daquela live na tela principal quando ela tiver dados detalhados salvos. O app bloqueia essa abertura se houver uma live em andamento ou dados já preenchidos na planilha principal.
 - `Resumo final`: mostra cada cliente em destaque, os códigos das peças, tempos, suplentes, checkbox por peça e total da cliente. No final, mostra clientes, peças vendidas e total vendido.
 - `Mensagens clientes`: mostra o `@` de cada cliente na lista e no início da mensagem copiada, seguido das peças arrematadas, total e instruções de pagamento. O prefixo não é duplicado quando o nome já foi preenchido com `@`.

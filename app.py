@@ -30,7 +30,7 @@ except ImportError:
 from roguelike_game import RogueBrechoGame
 
 
-APP_VERSION = "1.7.1"
+APP_VERSION = "1.7.2"
 
 COLUMNS = ("valor", "codigo", "cliente", "suplente", "tempo")
 HEADERS = {
@@ -2571,7 +2571,7 @@ class LiveSalesApp(tk.Tk):
 
     def _history_commission_amount(self, live):
         total = self._parse_money(str(live.get("total", "0") if isinstance(live, dict) else "0"))
-        return (total * Decimal("0.10")).quantize(Decimal("0.01"))
+        return (total * Decimal("0.10")).quantize(Decimal("0.01")) + Decimal("50.00")
 
     def _history_commission_value(self, live):
         return self._format_money(self._history_commission_amount(live))
@@ -2832,7 +2832,7 @@ class LiveSalesApp(tk.Tk):
             "sold_count": "Vendidas",
             "clients_count": "Clientes",
             "total": "Total vendido",
-            "commission": "10%",
+            "commission": "10% + R$ 50",
         }
         table = tk.Frame(window, bg=COLORS["app_bg"])
         table.pack(fill="both", expand=True, padx=18, pady=18)
@@ -3844,7 +3844,7 @@ class LiveSalesApp(tk.Tk):
 
         history_sheet = wb.create_sheet("Histórico de lives")
         history_sheet.append(
-            ["Finalizada em", "Iniciada em", "Duração", "Peças", "Vendidas", "Clientes", "Total", "10%", "Nomes das clientes"]
+            ["Finalizada em", "Iniciada em", "Duração", "Peças", "Vendidas", "Clientes", "Total", "10% + R$ 50", "Nomes das clientes"]
         )
         for live in self._read_history():
             history_sheet.append(

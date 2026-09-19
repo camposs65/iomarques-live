@@ -1,9 +1,13 @@
 import copy
+import tempfile
 import tkinter as tk
 import unittest
 from decimal import Decimal
+from pathlib import Path
 from tkinter import ttk
 from unittest.mock import Mock, patch
+
+from openpyxl import load_workbook
 
 from app import LiveSalesApp
 
@@ -26,15 +30,17 @@ class HistoryMonthTests(unittest.TestCase):
         self.assertEqual(groups[0]["label"], "Setembro de 2026")
         self.assertEqual([live["id"] for live in groups[0]["lives"]], ["second", "first"])
         self.assertEqual(groups[0]["total"], Decimal("2000.00"))
-        self.assertEqual(groups[0]["commission"], Decimal("200.00"))
+        self.assertEqual(groups[0]["commission"], Decimal("300.00"))
+        self.assertEqual(groups[1]["commission"], Decimal("70.00"))
+        self.assertEqual(groups[2]["commission"], Decimal("55.00"))
         self.assertEqual(lives, original)
 
     def test_month_commission_is_sum_of_displayed_cents(self):
         lives = [{"finished_at": "2026-09-07", "total": "R$ 0,06"} for _ in range(2)]
         group = self.app._history_month_groups(lives)[0]
         self.assertEqual(group["total"], Decimal("0.12"))
-        self.assertEqual(group["commission"], Decimal("0.02"))
-        self.assertEqual(self.app._history_commission_value(lives[0]), "R$ 0,01")
+        self.assertEqual(group["commission"], Decimal("100.02"))
+        self.assertEqual(self.app._history_commission_value(lives[0]), "R$ 50,01")
 
     def test_missing_dates_use_start_date_then_unknown_group(self):
         lives = [
@@ -45,7 +51,7 @@ class HistoryMonthTests(unittest.TestCase):
         groups = self.app._history_month_groups(lives)
         self.assertEqual([group["label"] for group in groups], ["Março de 2026", "Sem data"])
         self.assertEqual(groups[1]["total"], Decimal("30.00"))
-        self.assertEqual(groups[1]["commission"], Decimal("3.00"))
+        self.assertEqual(groups[1]["commission"], Decimal("103.00"))
 
     def test_empty_history_and_legacy_totals(self):
         self.assertEqual(self.app._history_month_groups([]), [])
@@ -53,7 +59,44 @@ class HistoryMonthTests(unittest.TestCase):
         group = self.app._history_month_groups(lives)[0]
         self.assertEqual(len(group["lives"]), 4)
         self.assertEqual(group["total"], Decimal("25.50"))
-        self.assertEqual(group["commission"], Decimal("2.55"))
+        self.assertEqual(group["commission"], Decimal("202.55"))
+
+    def test_fixed_amount_applies_once_per_live_without_changing_sales(self):
+        for total, expected in [("1.000,00", "150.00"), ("0,00", "50.00"),
+                                ("0,05", "50.00"), ("0,15", "50.02")]:
+            with self.subTest(total=total):
+                live = {"total": total}
+                original = copy.deepcopy(live)
+                for _ in range(2):
+                    self.assertEqual(self.app._history_commission_amount(live), Decimal(expected))
+                self.assertEqual(live, original)
+
+    def test_excel_history_uses_same_commission_and_preserves_sales_total(self):
+        self.app._finish_active_cell = Mock()
+        self.app._rows = Mock(return_value=[{
+            "valor": "1.000,00", "codigo": "001", "cliente": "Teste",
+            "suplente": "", "tempo": "00:01:00",
+        }])
+        self.app._read_history = Mock(return_value=[{"total": "R$ 1.000,00"}])
+        self.app._save_rows = Mock()
+        self.app._current_live_status = Mock(return_value="Finalizada")
+        self.app._current_elapsed_seconds = Mock(return_value=60)
+        self.app.live_id = "teste"
+        self.app.live_first_started_at = None
+        self.app.live_finished_at = None
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "historico.xlsx"
+            with patch("app.filedialog.asksaveasfilename", return_value=str(path)), \
+                    patch("app.messagebox.showinfo"):
+                self.app.export_excel()
+            workbook = load_workbook(path)
+            try:
+                history = workbook["Histórico de lives"]
+                self.assertEqual(history["H1"].value, "10% + R$ 50")
+                self.assertEqual(history["H2"].value, "R$ 150,00")
+                self.assertEqual(history["G2"].value, "R$ 1.000,00")
+            finally:
+                workbook.close()
 
 
 class HistoryWindowTests(unittest.TestCase):
@@ -105,7 +148,10 @@ class HistoryWindowTests(unittest.TestCase):
         self.open_history()
         self.assertEqual(self.tree.get_children(), ("month_2026_9", "month_2026_8"))
         self.assertEqual(self.tree.set("month_2026_9", "total"), "R$ 300,00")
-        self.assertEqual(self.tree.set("month_2026_9", "commission"), "R$ 30,00")
+        self.assertEqual(self.tree.set("month_2026_9", "commission"), "R$ 130,00")
+        self.assertEqual(self.tree.heading("commission", "text"), "10% + R$ 50")
+        self.assertEqual(self.tree.set("month_2026_9_live_0", "commission"), "R$ 60,00")
+        self.assertEqual(self.tree.set("month_2026_9_live_1", "commission"), "R$ 70,00")
         self.assertTrue(self.tree.item("month_2026_9", "open"))
         self.select("month_2026_9")
         self.assertTrue(self.open_button.instate(["disabled"]))
@@ -128,7 +174,7 @@ class HistoryWindowTests(unittest.TestCase):
         self.delete_button.invoke()
         self.app.update()
         self.assertEqual(self.tree.set("month_2026_9", "total"), "R$ 200,00")
-        self.assertEqual(self.tree.set("month_2026_9", "commission"), "R$ 20,00")
+        self.assertEqual(self.tree.set("month_2026_9", "commission"), "R$ 70,00")
         self.app._write_history.assert_called_once_with(self.lives, deleted_live_ids=["one"])
         self.assertEqual(self.tree.item("month_2026_9", "text"), "Setembro de 2026 (1 live)")
         self.assertFalse(self.tree.item("month_2026_8", "open"))
@@ -137,6 +183,7 @@ class HistoryWindowTests(unittest.TestCase):
         self.app.update()
         self.assertEqual(self.tree.get_children(), ("month_2026_8",))
         self.assertEqual(self.tree.set("month_2026_8", "total"), "R$ 50,00")
+        self.assertEqual(self.tree.set("month_2026_8", "commission"), "R$ 55,00")
         self.assertEqual(confirm.call_count, 2)
 
     def test_empty_history_disables_actions(self):
