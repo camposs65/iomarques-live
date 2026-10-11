@@ -30,17 +30,17 @@ class HistoryMonthTests(unittest.TestCase):
         self.assertEqual(groups[0]["label"], "Setembro de 2026")
         self.assertEqual([live["id"] for live in groups[0]["lives"]], ["second", "first"])
         self.assertEqual(groups[0]["total"], Decimal("2000.00"))
-        self.assertEqual(groups[0]["commission"], Decimal("300.00"))
-        self.assertEqual(groups[1]["commission"], Decimal("70.00"))
-        self.assertEqual(groups[2]["commission"], Decimal("55.00"))
+        self.assertEqual(groups[0]["commission"], Decimal("240.00"))
+        self.assertEqual(groups[1]["commission"], Decimal("40.00"))
+        self.assertEqual(groups[2]["commission"], Decimal("25.00"))
         self.assertEqual(lives, original)
 
     def test_month_commission_is_sum_of_displayed_cents(self):
         lives = [{"finished_at": "2026-09-07", "total": "R$ 0,06"} for _ in range(2)]
         group = self.app._history_month_groups(lives)[0]
         self.assertEqual(group["total"], Decimal("0.12"))
-        self.assertEqual(group["commission"], Decimal("100.02"))
-        self.assertEqual(self.app._history_commission_value(lives[0]), "R$ 50,01")
+        self.assertEqual(group["commission"], Decimal("40.02"))
+        self.assertEqual(self.app._history_commission_value(lives[0]), "R$ 20,01")
 
     def test_missing_dates_use_start_date_then_unknown_group(self):
         lives = [
@@ -51,7 +51,7 @@ class HistoryMonthTests(unittest.TestCase):
         groups = self.app._history_month_groups(lives)
         self.assertEqual([group["label"] for group in groups], ["Março de 2026", "Sem data"])
         self.assertEqual(groups[1]["total"], Decimal("30.00"))
-        self.assertEqual(groups[1]["commission"], Decimal("103.00"))
+        self.assertEqual(groups[1]["commission"], Decimal("43.00"))
 
     def test_empty_history_and_legacy_totals(self):
         self.assertEqual(self.app._history_month_groups([]), [])
@@ -59,11 +59,11 @@ class HistoryMonthTests(unittest.TestCase):
         group = self.app._history_month_groups(lives)[0]
         self.assertEqual(len(group["lives"]), 4)
         self.assertEqual(group["total"], Decimal("25.50"))
-        self.assertEqual(group["commission"], Decimal("202.55"))
+        self.assertEqual(group["commission"], Decimal("82.55"))
 
     def test_fixed_amount_applies_once_per_live_without_changing_sales(self):
-        for total, expected in [("1.000,00", "150.00"), ("0,00", "50.00"),
-                                ("0,05", "50.00"), ("0,15", "50.02")]:
+        for total, expected in [("1.000,00", "120.00"), ("0,00", "20.00"),
+                                ("0,05", "20.00"), ("0,15", "20.02")]:
             with self.subTest(total=total):
                 live = {"total": total}
                 original = copy.deepcopy(live)
@@ -92,8 +92,8 @@ class HistoryMonthTests(unittest.TestCase):
             workbook = load_workbook(path)
             try:
                 history = workbook["Histórico de lives"]
-                self.assertEqual(history["H1"].value, "10% + R$ 50")
-                self.assertEqual(history["H2"].value, "R$ 150,00")
+                self.assertEqual(history["H1"].value, "10% + R$ 20")
+                self.assertEqual(history["H2"].value, "R$ 120,00")
                 self.assertEqual(history["G2"].value, "R$ 1.000,00")
             finally:
                 workbook.close()
@@ -148,10 +148,10 @@ class HistoryWindowTests(unittest.TestCase):
         self.open_history()
         self.assertEqual(self.tree.get_children(), ("month_2026_9", "month_2026_8"))
         self.assertEqual(self.tree.set("month_2026_9", "total"), "R$ 300,00")
-        self.assertEqual(self.tree.set("month_2026_9", "commission"), "R$ 130,00")
-        self.assertEqual(self.tree.heading("commission", "text"), "10% + R$ 50")
-        self.assertEqual(self.tree.set("month_2026_9_live_0", "commission"), "R$ 60,00")
-        self.assertEqual(self.tree.set("month_2026_9_live_1", "commission"), "R$ 70,00")
+        self.assertEqual(self.tree.set("month_2026_9", "commission"), "R$ 70,00")
+        self.assertEqual(self.tree.heading("commission", "text"), "10% + R$ 20")
+        self.assertEqual(self.tree.set("month_2026_9_live_0", "commission"), "R$ 30,00")
+        self.assertEqual(self.tree.set("month_2026_9_live_1", "commission"), "R$ 40,00")
         self.assertTrue(self.tree.item("month_2026_9", "open"))
         self.select("month_2026_9")
         self.assertTrue(self.open_button.instate(["disabled"]))
@@ -174,7 +174,7 @@ class HistoryWindowTests(unittest.TestCase):
         self.delete_button.invoke()
         self.app.update()
         self.assertEqual(self.tree.set("month_2026_9", "total"), "R$ 200,00")
-        self.assertEqual(self.tree.set("month_2026_9", "commission"), "R$ 70,00")
+        self.assertEqual(self.tree.set("month_2026_9", "commission"), "R$ 40,00")
         self.app._write_history.assert_called_once_with(self.lives, deleted_live_ids=["one"])
         self.assertEqual(self.tree.item("month_2026_9", "text"), "Setembro de 2026 (1 live)")
         self.assertFalse(self.tree.item("month_2026_8", "open"))
@@ -183,7 +183,7 @@ class HistoryWindowTests(unittest.TestCase):
         self.app.update()
         self.assertEqual(self.tree.get_children(), ("month_2026_8",))
         self.assertEqual(self.tree.set("month_2026_8", "total"), "R$ 50,00")
-        self.assertEqual(self.tree.set("month_2026_8", "commission"), "R$ 55,00")
+        self.assertEqual(self.tree.set("month_2026_8", "commission"), "R$ 25,00")
         self.assertEqual(confirm.call_count, 2)
 
     def test_empty_history_disables_actions(self):
