@@ -1,4 +1,4 @@
-# IoMarques Brechó — Controle de Vendas da Live · v1.9.0
+# IoMarques Brechó — Controle de Vendas da Live · v1.9.1
 
 Aplicativo para Windows usado para anotar as peças durante as lives no Instagram. O Supabase guarda a live em andamento e o histórico completo; a instalação prepara o programa e cria o atalho na Área de Trabalho.
 
@@ -6,7 +6,7 @@ Aplicativo para Windows usado para anotar as peças durante as lives no Instagra
 
 Requisitos: Windows 10 ou 11 de 64 bits (x64), internet e um usuário do Controle do Brechó. Não é necessário instalar Python manualmente ou executar comandos.
 
-1. No GitHub, abra **Releases** e baixe o arquivo `IoMarquesLive-v1.9.0-Instalacao.zip` da versão mais recente. Também é possível usar **Code → Download ZIP** neste repositório.
+1. No GitHub, abra **Releases** e baixe o arquivo `IoMarquesLive-v1.9.1-Instalacao.zip` da versão mais recente. Também é possível usar **Code → Download ZIP** neste repositório.
 2. Clique com o botão direito no ZIP e escolha **Extrair Tudo**. Não execute o instalador de dentro do arquivo compactado.
 3. Abra a pasta extraída e dê dois cliques em **Instalar.bat**.
 4. Aguarde a preparação inicial e a janela de progresso. Na primeira instalação, o download e a montagem do aplicativo podem levar alguns minutos; mantenha a internet conectada.
@@ -89,6 +89,14 @@ No perfil masculino, clique em `Mensagem do masculino` para editar o modelo comp
 O modelo só é considerado salvo depois da confirmação do Supabase. Essa alteração fica disponível nos outros computadores e nas próximas lives do Marques Brechó; um rascunho ainda não iniciado também pode recebê-la. Cada live iniciada conserva uma cópia da mensagem que estava escolhida naquele momento. Editar o modelo posteriormente não altera mensagens de lives em andamento ou antigas. A mensagem de Io Marques mantém o modelo existente.
 
 Antes de usar os dois perfis, o responsável deve executar pessoalmente no Supabase a migration `supabase/migrations/20261022000100_perfis_app_live.sql`, disponível no repositório `brecho-controle`. Ela prepara os modelos compartilhados e a identificação por live, preservando os documentos anteriores. O instalador não executa essa query. O acesso aos modelos exige uma administradora ativa, assim como os documentos completos do desktop.
+
+### Quantidade comprada por cliente
+
+Um número pequeno no canto do campo `Cliente` mostra quantas peças aquele Instagram comprou no histórico disponível e na live aberta, somando os dois perfis. O contador não altera o nome, as mensagens ou a planilha exportada. Passe o mouse sobre o número para ver a explicação.
+
+`ana`, `@ana` e `ANA` são a mesma cliente para essa contagem. Suplentes não contam como compras até serem promovidas a clientes titulares. Correções, desfazer/refazer e remoções atualizam o total; reabrir uma live do histórico não duplica suas peças. A live atual é uma previsão enquanto seus envios estiverem pendentes, conforme o aviso de sincronização.
+
+O app calcula os números a partir das lives já guardadas no Supabase, sem novo cadastro ou migration. Ao carregar o histórico, aparece `…` em vez de um zero incorreto. Se houver lives antigas sem as linhas detalhadas, o número recebe `+`, indicando um mínimo conhecido. Lives excluídas não entram na soma; não é possível recuperar suas compras a partir de resumos sem detalhamento. Não é criado um contador separado que sobreviva à exclusão do histórico.
 
 ## Dados completos no Supabase
 

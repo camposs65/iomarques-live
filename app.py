@@ -20,6 +20,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from ctypes import wintypes
 
 from cloud_store import CloudLiveStore
+from customer_purchases import build_purchase_history, effective_purchase_counts, normalize_customer
 from update_client import UpdateClient
 from live_profiles import (
     IO_MARQUES, MARQUES_BRECHO, PROFILE_NAMES, MONOCHROME_COLORS,
@@ -37,7 +38,7 @@ except ImportError:
 from roguelike_game import RogueBrechoGame
 
 
-APP_VERSION = "1.9.0"
+APP_VERSION = "1.9.1"
 
 COLUMNS = ("valor", "codigo", "cliente", "suplente", "tempo")
 HEADERS = {
@@ -149,6 +150,11 @@ class LiveSalesApp(tk.Tk):
         self.cell_frames = []
         self.cell_entries = []
         self.clear_buttons = []
+        self.customer_count_labels = []
+        self.purchase_history = build_purchase_history([])
+        self.purchase_history_loaded = False
+        self.purchase_auth_context = None
+        self.customer_count_tooltip = None
         self.active_cell = None
         self.hovered_cell = None
         self.undo_stack = []
@@ -661,6 +667,23 @@ class LiveSalesApp(tk.Tk):
             check_editor()
         self._refresh_cloud_editability()
         self._refresh_update_controls()
+        store = self.__dict__.get("sync_manager")
+        context_changed = (getattr(store, "contexto_autenticacao", None)
+                           != self.__dict__.get("purchase_auth_context"))
+        if (status == "synced" and store is not None
+                and getattr(store, "cloud_loaded", False) is True
+                and getattr(store, "is_authenticated", False) is True
+                and (context_changed or not self.purchase_history_loaded)):
+            self.purchase_history = build_purchase_history(store.history())
+            self.purchase_history_loaded = True
+            self.purchase_auth_context = getattr(store, "contexto_autenticacao", None)
+            self._refresh_customer_counts()
+        elif (status in ("auth_required", "not_configured")
+                or store is None or getattr(store, "cloud_loaded", False) is not True or context_changed):
+            self.purchase_history = build_purchase_history([])
+            self.purchase_history_loaded = False
+            self.purchase_auth_context = None
+            self._refresh_customer_counts()
 
     def _refresh_cloud_editability(self):
         editable = bool(self.sync_manager and self.sync_manager.ready
@@ -683,6 +706,16 @@ class LiveSalesApp(tk.Tk):
     def _apply_cloud_data(self):
         if self.sync_manager is None:
             return
+        self.purchase_history_loaded = (
+            getattr(self.sync_manager, "cloud_loaded", False) is True
+            and getattr(self.sync_manager, "is_authenticated", False) is True
+            and self.sync_status not in ("auth_required", "not_configured")
+        )
+        self.purchase_history = build_purchase_history(
+            self.sync_manager.history() if self.purchase_history_loaded else []
+        )
+        self.purchase_auth_context = (getattr(self.sync_manager, "contexto_autenticacao", None)
+                                      if self.purchase_history_loaded else None)
         check_editor = self.__dict__.get("profile_message_context_check")
         if check_editor is not None:
             check_editor()
@@ -704,6 +737,7 @@ class LiveSalesApp(tk.Tk):
         if "profile_switch_var" in self.__dict__:
             self._refresh_profile_controls()
         self._refresh_update_controls()
+        self._refresh_customer_counts()
         if self.live_id and self.sync_manager.is_deleted(self.live_id):
             self._apply_sync_status(self.sync_status, self.sync_detail, self.sync_username)
 
@@ -743,10 +777,12 @@ class LiveSalesApp(tk.Tk):
         return True
 
     def _reset_sheet_widgets(self):
+        self._hide_customer_count_hint()
         for child in self.body_frame.winfo_children():
             child.destroy()
         for name in ("row_vars", "index_frames", "index_labels", "time_check_vars",
-                     "time_check_buttons", "manual_time_vars", "cell_frames", "cell_entries", "clear_buttons"):
+                     "time_check_buttons", "manual_time_vars", "cell_frames", "cell_entries", "clear_buttons",
+                     "customer_count_labels"):
             getattr(self, name).clear()
         self.active_cell = self.hovered_cell = None
 
@@ -2240,6 +2276,7 @@ class LiveSalesApp(tk.Tk):
     def _remove_last_row(self):
         if not self.row_vars:
             return
+        self._hide_customer_count_hint()
         self.index_frames[-1].destroy()
         for cell in self.cell_frames[-1]:
             cell.destroy()
@@ -2252,6 +2289,7 @@ class LiveSalesApp(tk.Tk):
         self.cell_frames.pop()
         self.cell_entries.pop()
         self.clear_buttons.pop()
+        self.customer_count_labels.pop()
         if self.active_cell and self.active_cell[0] >= len(self.row_vars):
             self.active_cell = None
 
@@ -2397,6 +2435,7 @@ class LiveSalesApp(tk.Tk):
         row_frames = []
         row_entries = []
         row_buttons = []
+        customer_count = None
 
         self.body_frame.grid_columnconfigure(0, weight=0, minsize=INDEX_COLUMN_WIDTH)
         index_cell = tk.Frame(
@@ -2462,6 +2501,14 @@ class LiveSalesApp(tk.Tk):
             )
             entry.pack(side="left", fill="both", expand=True, padx=(10, 4), pady=7)
 
+            if col == CLIENT_COL:
+                customer_count = tk.Label(cell, text="", bg=self.colors["table_bg"],
+                                           fg=self.colors["button_text"], font=("Segoe UI", 8),
+                                           bd=0, padx=1, anchor="ne")
+                customer_count.bind("<Enter>", lambda event, r=row_index: self._show_customer_count_hint(event, r))
+                customer_count.bind("<Leave>", self._hide_customer_count_hint)
+                customer_count.bind("<Button-1>", lambda _event, widget=entry: widget.focus_set())
+
             clear_button = None
             if col in CLEARABLE_CLIENT_COLS:
                 clear_button = tk.Button(
@@ -2513,6 +2560,7 @@ class LiveSalesApp(tk.Tk):
         self.cell_frames.append(row_frames)
         self.cell_entries.append(row_entries)
         self.clear_buttons.append(row_buttons)
+        self.customer_count_labels.append(customer_count)
         self._refresh_row_style(row_index)
         self._on_body_configure()
         if hasattr(self, "filter_vars") and any(var.get().strip() for var in self.filter_vars):
@@ -2740,6 +2788,8 @@ class LiveSalesApp(tk.Tk):
             button = self.clear_buttons[row][col]
             if button is not None:
                 button.configure(bg=bg)
+        if row < len(self.__dict__.get("customer_count_labels", [])):
+            self.customer_count_labels[row].configure(bg=bg, fg=self.colors["button_text"])
         if self.active_cell:
             self._refresh_cell_border(*self.active_cell)
 
@@ -3099,10 +3149,58 @@ class LiveSalesApp(tk.Tk):
         }
 
     def _refresh_totals(self):
+        self._refresh_customer_counts()
         if not hasattr(self, "total_sold_label"):
             return
         stats = self._current_live_stats()
         self.total_sold_label.configure(text=f"Vendido: {self._format_money(stats['total'])}")
+
+    def _refresh_customer_counts(self):
+        labels = self.__dict__.get("customer_count_labels", [])
+        if not labels:
+            return
+        loaded = self.purchase_history_loaded
+        counts = effective_purchase_counts(self.purchase_history, self.live_id, self._rows()) if loaded else {}
+        for row, label in enumerate(labels):
+            customer = normalize_customer(self.row_vars[row][CLIENT_COL].get())
+            if not customer:
+                label.configure(text="")
+                label.pack_forget()
+                continue
+            if not loaded:
+                text = "…"
+                hint = "Aguardando o histórico do Supabase. O total de compras ainda não foi confirmado."
+            else:
+                number = counts.get(customer, 0)
+                text = f"{number}{'+' if self.purchase_history.incomplete else ''}"
+                hint = (f"{'Pelo menos ' if self.purchase_history.incomplete else ''}{number} "
+                        f"{'peça comprada' if number == 1 else 'peças compradas'} · histórico + live aberta.\n"
+                        "Soma Io Marques e Marques Brechó pelo Instagram da cliente.")
+                if self.purchase_history.incomplete:
+                    hint += "\nHá lives sem detalhamento suficiente; o total pode ser maior."
+            label.configure(text=text, bg=self._row_bg(row), fg=self.colors["button_text"])
+            label.purchase_hint = hint
+            label.pack(side="right", anchor="n", padx=(0, 6), pady=(4, 0))
+
+    def _show_customer_count_hint(self, event, row):
+        self._hide_customer_count_hint()
+        labels = self.__dict__.get("customer_count_labels", [])
+        if row >= len(labels) or not labels[row].cget("text"):
+            return
+        tooltip = tk.Toplevel(self)
+        self.customer_count_tooltip = tooltip
+        tooltip.overrideredirect(True)
+        tooltip.attributes("-topmost", True)
+        tk.Label(tooltip, text=labels[row].purchase_hint, bg=self.colors["table_bg"],
+                 fg=self.colors["text"], font=("Segoe UI", 9), justify="left", padx=9, pady=6,
+                 relief="solid", bd=1).pack()
+        tooltip.geometry(f"+{event.x_root + 10}+{event.y_root + 18}")
+
+    def _hide_customer_count_hint(self, _event=None):
+        tooltip = self.__dict__.get("customer_count_tooltip")
+        if tooltip is not None:
+            tooltip.destroy()
+            self.customer_count_tooltip = None
 
     def _current_live_history_record(self, finished_at=None):
         stats = self._current_live_stats()

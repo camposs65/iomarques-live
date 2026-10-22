@@ -21,7 +21,7 @@ APP_NAME = "IoMarques Brecho"
 EXE_NAME = f"{APP_NAME}.exe"
 UPDATER_NAME = "IoMarques Atualizador"
 UPDATER_EXE = f"{UPDATER_NAME}.exe"
-SOURCE_FILES = ("app.py", "cloud_store.py", "supabase_sync.py", "live_profiles.py", "roguelike_game.py",
+SOURCE_FILES = ("app.py", "cloud_store.py", "supabase_sync.py", "live_profiles.py", "customer_purchases.py", "roguelike_game.py",
                 "gerar_assets_logo.py", "update_client.py", "update_helper.py", "installation.py",
                 "preparar_config_integracao.py")
 ASSET_FILES = ("logo_original.png", "entregas.png", "avaliacoes.pdf")
