@@ -538,6 +538,17 @@ class CloudLiveStore(SupabaseHistorySync):
             self._emit("error", "O histórico está incompleto e não pôde ser salvo.")
             return False
 
+    @staticmethod
+    def _empties_finished_history(document, previous):
+        previous_history = previous.get("historico") if isinstance(previous, dict) else None
+        if (not isinstance(previous_history, dict) or not previous_history.get("finished_at")
+                or not previous_history.get("rows")):
+            return False
+        history = document.get("historico")
+        state = document.get("estado")
+        return (not isinstance(history, dict) or not history.get("rows")
+                or (isinstance(state, dict) and not state.get("rows")))
+
     def _queue_documents_locked(self, documents, immediate=False):
         if self._auth_blocked:
             self._emit("auth_required", "Esta conta não está ativa. Entre com uma conta autorizada antes de editar.")
@@ -550,6 +561,13 @@ class CloudLiveStore(SupabaseHistorySync):
                 if live_id in self._deleted_ids and live_id not in self._pending:
                     raise CloudStorageError("Esta live foi excluída do Supabase. Exporte a folha se precisar e inicie uma nova live.")
                 self._validate_document(live_id, document)
+                for previous in (current.get(live_id), self._remote.get(live_id, {}).get("documento")):
+                    if self._empties_finished_history(document, previous):
+                        raise CloudStorageError(
+                            "O salvamento foi bloqueado para não apagar as peças de uma live finalizada. "
+                            "Os dados anteriores e as pendências foram preservados. "
+                            "Para excluir uma live, use a exclusão administrativa do histórico."
+                        )
                 if document != current.get(live_id):
                     pending[live_id] = self._new_entry_locked(live_id, document)
                     changed = True
@@ -983,7 +1001,11 @@ class CloudLiveStore(SupabaseHistorySync):
         return True
 
     def _emit_pending(self):
-        if self.conflicts():
+        conflicts = self.conflicts()
+        if any(item["motivo"] == "planilha_vazia" for item in conflicts):
+            self._emit("conflict", "Uma planilha vazia foi bloqueada para não apagar as peças do histórico. "
+                       "Os dados do Supabase e a pendência deste computador foram preservados. Revise os conflitos.")
+        elif conflicts:
             self._emit("conflict", "Há alterações de outro computador ou lives excluídas. A cópia pendente foi preservada para revisão.")
         else:
             self._emit("pending", "Alterações protegidas neste computador; aguardando confirmação do Supabase.")
@@ -1003,12 +1025,25 @@ class CloudLiveStore(SupabaseHistorySync):
             entry = self._pending.get(live_id)
             if not entry or entry.get("conflito") or generation != self._generation:
                 return
-            if entry["tipo"] == "save" and entry["enviado"] is None:
+            remote = self._remote.get(live_id, {}).get("documento")
+            if entry["tipo"] == "save" and any(
+                    self._empties_finished_history(proposal, remote)
+                    for proposal in (entry["documento"], entry.get("enviado")) if proposal is not None):
                 pending = _clone(self._pending)
-                pending[live_id]["enviado"] = _clone(entry["documento"])
+                pending[live_id]["conflito"] = "planilha_vazia"
                 self._persist_locked(pending)
                 self._pending = pending
-            sent = _clone(self._pending[live_id])
+                sent = None
+            else:
+                if entry["tipo"] == "save" and entry["enviado"] is None:
+                    pending = _clone(self._pending)
+                    pending[live_id]["enviado"] = _clone(entry["documento"])
+                    self._persist_locked(pending)
+                    self._pending = pending
+                sent = _clone(self._pending[live_id])
+        if sent is None:
+            self._notify_data()
+            return
         if sent["tipo"] == "delete":
             if not self.is_admin:
                 raise SyncAuthError("A exclusão pendente exige uma administradora ativa.")

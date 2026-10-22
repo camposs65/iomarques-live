@@ -1,4 +1,4 @@
-# IoMarques Brechó — Controle de Vendas da Live · v1.9.1
+# IoMarques Brechó — Controle de Vendas da Live · v1.9.2
 
 Aplicativo para Windows usado para anotar as peças durante as lives no Instagram. O Supabase guarda a live em andamento e o histórico completo; a instalação prepara o programa e cria o atalho na Área de Trabalho.
 
@@ -6,7 +6,7 @@ Aplicativo para Windows usado para anotar as peças durante as lives no Instagra
 
 Requisitos: Windows 10 ou 11 de 64 bits (x64), internet e um usuário do Controle do Brechó. Não é necessário instalar Python manualmente ou executar comandos.
 
-1. No GitHub, abra **Releases** e baixe o arquivo `IoMarquesLive-v1.9.1-Instalacao.zip` da versão mais recente. Também é possível usar **Code → Download ZIP** neste repositório.
+1. No GitHub, abra **Releases** e baixe o arquivo `IoMarquesLive-v1.9.2-Instalacao.zip` da versão mais recente. Também é possível usar **Code → Download ZIP** neste repositório.
 2. Clique com o botão direito no ZIP e escolha **Extrair Tudo**. Não execute o instalador de dentro do arquivo compactado.
 3. Abra a pasta extraída e dê dois cliques em **Instalar.bat**.
 4. Aguarde a preparação inicial e a janela de progresso. Na primeira instalação, o download e a montagem do aplicativo podem levar alguns minutos; mantenha a internet conectada.
@@ -47,6 +47,8 @@ Use **Ver relatório** na janela do instalador. O arquivo fica em `%LOCALAPPDATA
 O ambiente de dependências fica em `%LOCALAPPDATA%\IoMarquesLive\instalador\venv`. Esse ambiente é do instalador; o aplicativo instalado possui seu próprio executável. Atualizações também podem precisar de internet para baixar dependências.
 
 ## Dados locais e backups
+
+Na versão 1.9.2, abrir uma live do histórico não envia alterações ao Supabase. Se o carregamento falhar, a edição e o salvamento ficam bloqueados até uma abertura completa ou reinício. O serviço também recusa substituir uma live finalizada com peças por uma planilha vazia; para excluí-la, use a ação administrativa específica. Essas proteções não recuperam dados já sobrescritos em versões anteriores.
 
 O computador mantém somente os arquivos necessários para conexão e recuperação de alterações ainda não confirmadas:
 

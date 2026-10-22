@@ -38,7 +38,7 @@ except ImportError:
 from roguelike_game import RogueBrechoGame
 
 
-APP_VERSION = "1.9.1"
+APP_VERSION = "1.9.2"
 
 COLUMNS = ("valor", "codigo", "cliente", "suplente", "tempo")
 HEADERS = {
@@ -186,6 +186,7 @@ class LiveSalesApp(tk.Tk):
         self.history_refreshers = {}
         self.sheet_dirty = False
         self.applying_cloud = False
+        self.sheet_load_error = False
         self.last_saved_sheet = None
         self.last_save_failed = False
         self.closing = False
@@ -341,7 +342,9 @@ class LiveSalesApp(tk.Tk):
                 widget.configure(**changes)
             if isinstance(widget, (tk.Text, ttk.Treeview)):
                 tag_bindings = getattr(widget, "_live_theme_tags", {})
-                for tag in widget.tag_names():
+                tags = (widget.tag_names() if isinstance(widget, tk.Text) else
+                        widget.tk.splitlist(widget.tk.call(widget._w, "tag", "names")))
+                for tag in tags:
                     for option in ("background", "foreground"):
                         config = widget.tag_configure(tag)
                         if option not in config:
@@ -636,7 +639,10 @@ class LiveSalesApp(tk.Tk):
             self.cloud_poll_job = self.after(150, self._poll_cloud_events)
 
     def _apply_sync_status(self, status, detail, username):
-        if self.last_save_failed and status not in ("auth_required", "not_configured"):
+        if self.__dict__.get("sheet_load_error", False) and status not in ("auth_required", "not_configured"):
+            status, detail = "error", ("O carregamento da planilha falhou. O salvamento está bloqueado para proteger "
+                                       "o Supabase. Feche e reabra o aplicativo antes de continuar.")
+        elif self.last_save_failed and status not in ("auth_required", "not_configured"):
             status, detail = "error", "Há alterações na planilha que ainda não puderam ser protegidas. Não feche o programa."
         elif (status not in ("auth_required", "not_configured") and self.live_id
               and self.sync_manager and self.sync_manager.is_deleted(self.live_id)):
@@ -687,6 +693,7 @@ class LiveSalesApp(tk.Tk):
 
     def _refresh_cloud_editability(self):
         editable = bool(self.sync_manager and self.sync_manager.ready
+                        and not self.__dict__.get("sheet_load_error", False)
                         and not (self.live_id and self.sync_manager.is_deleted(self.live_id)))
         for entries in self.cell_entries:
             for entry in entries:
@@ -701,7 +708,8 @@ class LiveSalesApp(tk.Tk):
         self.finish_button.state(["!disabled" if editable and self.live_running else "disabled"])
 
     def _sheet_is_pristine(self):
-        return not self.sheet_dirty and not self.live_id and not self._rows()
+        return (not self.__dict__.get("sheet_load_error", False)
+                and not self.sheet_dirty and not self.live_id and not self._rows())
 
     def _apply_cloud_data(self):
         if self.sync_manager is None:
@@ -744,11 +752,15 @@ class LiveSalesApp(tk.Tk):
     def _apply_saved_state(self, data, history=None):
         try:
             self._saved_profile_metadata(data)
+            if (not isinstance(data, dict) or not isinstance(data.get("rows", []), list)
+                    or any(not isinstance(row, dict) for row in data.get("rows", []))):
+                raise ValueError("As linhas desta live são inválidas.")
         except ValueError as exc:
             messagebox.showerror("Live inválida", str(exc))
             return False
         old_id = self.live_id
         self.applying_cloud = True
+        self.sheet_load_error = True
         try:
             if self.timer_job is not None:
                 self.after_cancel(self.timer_job)
@@ -772,8 +784,19 @@ class LiveSalesApp(tk.Tk):
                     self.sync_manager.begin_edit(self.live_id, state=data)
                 else:
                     self.sync_manager.begin_edit(self.live_id, history=history)
+            self.sheet_load_error = False
+        except Exception:
+            self.last_save_failed = True
+            messagebox.showerror(
+                "Abertura interrompida",
+                "Não foi possível carregar a planilha por completo. O salvamento foi bloqueado "
+                "para não substituir os dados no Supabase.\n\n"
+                "Feche e reabra o aplicativo antes de continuar. Não exclua a live.",
+            )
+            return False
         finally:
             self.applying_cloud = False
+            self._refresh_cloud_editability()
         return True
 
     def _reset_sheet_widgets(self):
@@ -2977,6 +3000,14 @@ class LiveSalesApp(tk.Tk):
     def _save_rows(self, show_error=True):
         if self.applying_cloud:
             return True
+        if self.__dict__.get("sheet_load_error", False):
+            if show_error:
+                messagebox.showerror(
+                    "Salvamento bloqueado",
+                    "A planilha não terminou de carregar e não será enviada ao Supabase. "
+                    "Feche e reabra o aplicativo antes de continuar.",
+                )
+            return False
         if not self.live_id and not self.live_running and not self._rows():
             return True
         if not self.live_id:
@@ -3345,6 +3376,7 @@ class LiveSalesApp(tk.Tk):
             "versao": "Alterada em outro computador",
             "excluida": "Excluída no Supabase",
             "migracao": "Backup diferente da versão no Supabase",
+            "planilha_vazia": "Planilha vazia bloqueada para proteger o histórico",
         }
         for index, conflict in enumerate(conflicts):
             tree.insert("", "end", iid=str(index), values=(conflict["id"],
@@ -5295,6 +5327,15 @@ class LiveSalesApp(tk.Tk):
         if editor is not None and editor.winfo_exists():
             editor.lift()
             messagebox.showinfo("Mensagem aberta", "Aguarde o salvamento e feche a janela da mensagem antes de sair do aplicativo.", parent=editor)
+            return
+        if self.__dict__.get("sheet_load_error", False):
+            if messagebox.askyesno(
+                "Fechar após falha de carregamento?",
+                "A planilha não foi carregada por completo e esta tela não será salva. "
+                "Os dados do Supabase e a fila protegida não serão apagados.\n\n"
+                "Fechar o aplicativo para abri-lo novamente?", default="no",
+            ):
+                self._close_application()
             return
         self._finish_active_cell()
         saved = self._save_rows(show_error=False)

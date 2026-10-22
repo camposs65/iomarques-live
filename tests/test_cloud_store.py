@@ -174,6 +174,151 @@ class CloudStoreTests(unittest.TestCase):
         self.assertFalse(self.manager.has_pending)
         self.assertFalse(self.manager.queue_path.exists())
 
+    def test_empty_finished_state_and_history_cannot_replace_saved_pieces(self):
+        original = document(finalized=True)
+        self.cloud.rows["live_test"] = envelope(doc=original)
+        self.manager._flush()
+        empty = copy.deepcopy(original)
+        empty["estado"]["rows"] = []
+        empty["historico"].update(rows=[], pieces_count=0, sold_count=0, total="0,00")
+
+        self.assertFalse(self.manager.queue_state(empty["estado"], empty["historico"]))
+
+        self.assertEqual(self.manager.remote_document("live_test"), original)
+        self.assertFalse(self.manager.has_pending)
+        self.assertFalse(self.manager.queue_path.exists())
+        self.assertIn("não apagar as peças", self.manager.detail)
+        self.assertEqual(self.manager.status, "error")
+
+    def test_empty_finished_state_cannot_replace_pieces_even_without_history_argument(self):
+        original = document(finalized=True)
+        self.cloud.rows["live_test"] = envelope(doc=original)
+        self.manager._flush()
+        empty = copy.deepcopy(original["estado"])
+        empty["rows"] = []
+
+        self.assertFalse(self.manager.queue_state(empty))
+
+        self.assertEqual(self.manager.remote_document("live_test"), original)
+        self.assertFalse(self.manager.has_pending)
+        self.assertFalse(self.manager.queue_path.exists())
+
+    def test_empty_history_rejects_entire_batch_and_preserves_existing_pending_bytes(self):
+        for key in ("live_test", "another"):
+            self.cloud.rows[key] = envelope(key, doc=document(key, finalized=True))
+        self.manager._flush()
+        self.assertTrue(self.manager.queue_state(state("pending")))
+        pending = copy.deepcopy(self.manager._pending)
+        pending_bytes = self.manager.queue_path.read_bytes()
+        edited = history("another", client="cliente-corrigida")
+        empty = history()
+        empty.update(rows=[], pieces_count=0, sold_count=0, total="0,00")
+        self.manager._schedule_flush.reset_mock()
+        self.manager.data_callback = Mock()
+
+        with patch.object(self.manager, "_persist_locked", wraps=self.manager._persist_locked) as persist:
+            self.assertFalse(self.manager.queue_history([edited, empty]))
+        persist.assert_not_called()
+        self.assertEqual(self.manager._pending, pending)
+        self.assertEqual(self.manager.queue_path.read_bytes(), pending_bytes)
+        self.assertCountEqual(self.manager.history(), [history(), history("another")])
+        self.manager._schedule_flush.assert_not_called()
+        self.manager.data_callback.assert_not_called()
+
+    def test_empty_finished_overwrite_also_preserves_unconfirmed_live(self):
+        original = document(finalized=True)
+        self.assertTrue(self.manager.queue_state(original["estado"], original["historico"]))
+        pending = copy.deepcopy(self.manager._pending)
+        pending_bytes = self.manager.queue_path.read_bytes()
+        empty = copy.deepcopy(original)
+        empty["estado"]["rows"] = []
+        empty["historico"].update(rows=[], pieces_count=0, sold_count=0, total="0,00")
+
+        self.assertFalse(self.manager.queue_state(empty["estado"], empty["historico"]))
+
+        self.assertEqual(self.manager._pending, pending)
+        self.assertEqual(self.manager.queue_path.read_bytes(), pending_bytes)
+        self.assertEqual(self.manager.history(), [original["historico"]])
+
+    def test_finished_live_still_allows_normal_state_and_history_corrections(self):
+        original = document(finalized=True)
+        self.cloud.rows["live_test"] = envelope(doc=original)
+        self.manager._flush()
+        corrected = copy.deepcopy(original)
+        for value in (corrected["estado"], corrected["historico"]):
+            value["rows"][0].update(valor="25,00", cliente="cliente-corrigida")
+        corrected["historico"]["total"] = "25,00"
+
+        self.assertTrue(self.manager.queue_state(corrected["estado"], corrected["historico"]))
+        self.manager._flush()
+        self.assertEqual(self.manager.remote_document("live_test"), corrected)
+        changed_history = copy.deepcopy(corrected["historico"])
+        changed_history["rows"][0]["cliente"] = "outra-cliente"
+        self.assertTrue(self.manager.queue_history([changed_history]))
+        self.manager._flush()
+        self.assertEqual(self.manager.history(), [changed_history])
+
+    def test_finalized_live_with_pieces_still_allows_administrative_deletion(self):
+        self.cloud.rows["live_test"] = envelope(doc=document(finalized=True))
+        self.manager._flush()
+        self.manager._is_admin = True
+
+        self.assertTrue(self.manager.queue_delete("live_test"))
+        self.manager._flush()
+
+        self.assertNotIn("live_test", self.cloud.rows)
+        self.assertEqual(self.manager.history(), [])
+        self.assertFalse(self.manager.has_pending)
+
+    def test_recovered_empty_finished_outbox_is_quarantined_without_remote_save(self):
+        pending = {}
+        for key, already_sent in (("legacy_unsent", False), ("legacy_sent", True)):
+            self.cloud.rows[key] = envelope(key, doc=document(key, finalized=True))
+            empty = document(key, finalized=True)
+            empty["estado"]["rows"] = []
+            empty["historico"].update(rows=[], pieces_count=0, sold_count=0, total="0,00")
+            pending[key] = {"tipo": "save", "documento": empty,
+                            "enviado": copy.deepcopy(empty) if already_sent else None,
+                            "versao_esperada": 1, "operacao_id": str(uuid.uuid4()), "conflito": None}
+        self.manager._persist_locked(pending)
+        original_remote = copy.deepcopy(self.cloud.rows)
+        recovered = self.make_manager()
+
+        recovered._flush()
+
+        self.assertEqual(self.cloud.rows, original_remote)
+        self.assertEqual([name for name, _args in self.cloud.calls if name == "salvar_dados_live"], [])
+        self.assertEqual(recovered._pending, {
+            key: {**entry, "conflito": "planilha_vazia"} for key, entry in pending.items()})
+        self.assertTrue(recovered.has_pending)
+        self.assertEqual(recovered.status, "conflict")
+        self.assertIn("planilha vazia", recovered.detail)
+        protected = recovered.queue_path.read_bytes()
+        restarted = self.make_manager()
+        restarted._flush()
+        self.assertEqual(restarted._pending, recovered._pending)
+        self.assertEqual(restarted.queue_path.read_bytes(), protected)
+        self.assertEqual(self.cloud.rows, original_remote)
+        self.assertEqual([name for name, _args in self.cloud.calls if name == "salvar_dados_live"], [])
+
+    def test_recovered_empty_immutable_request_is_blocked_even_if_latest_document_has_pieces(self):
+        original = document(finalized=True)
+        self.cloud.rows["live_test"] = envelope(doc=original)
+        empty_request = copy.deepcopy(original)
+        empty_request["estado"]["rows"] = []
+        empty_request["historico"].update(rows=[], pieces_count=0, sold_count=0, total="0,00")
+        pending = {"live_test": {"tipo": "save", "documento": original, "enviado": empty_request,
+                                 "versao_esperada": 1, "operacao_id": str(uuid.uuid4()), "conflito": None}}
+        self.manager._persist_locked(pending)
+        recovered = self.make_manager()
+
+        recovered._flush()
+
+        self.assertEqual(self.cloud.rows["live_test"]["documento"], original)
+        self.assertEqual(recovered._pending["live_test"], {**pending["live_test"], "conflito": "planilha_vazia"})
+        self.assertEqual([name for name, _args in self.cloud.calls if name == "salvar_dados_live"], [])
+        self.assertEqual(recovered.status, "conflict")
+
     def test_offline_start_can_only_restore_pending_not_invent_full_history(self):
         self.manager.queue_state(state())
         self.manager._load_profile.side_effect = SyncTemporaryError("Offline")

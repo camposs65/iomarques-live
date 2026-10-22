@@ -169,6 +169,77 @@ class CloudUiTests(unittest.TestCase):
         self.app._save_rows()
         self.assertEqual(self.store.saved, [])
 
+    def test_failed_history_load_blocks_all_saves_until_complete_reload(self):
+        live = {"id": "old", "started_at": "2026-09-01T12:00:00", "finished_at": "2026-09-01T13:00:00",
+                "duration": "01:00:00", "total": "R$ 20,00", "rows": [ROW]}
+        self.store.lives = [copy.deepcopy(live)]
+        with patch.object(self.app, "_load_saved_rows", side_effect=RuntimeError("Falha simulada")), \
+                patch("app.messagebox.showerror") as error:
+            self.assertFalse(self.app._load_history_live_into_main_sheet(live))
+            error.assert_called_once()
+        self.assertTrue(self.app.sheet_load_error)
+        self.assertFalse(self.app._save_rows(show_error=False))
+        self.app._apply_sync_status("synced", "Confirmado", "teste")
+        self.assertIn("carregamento", self.app.sync_detail)
+        self.assertNotIn("Não feche", self.app.sync_detail)
+        self.assertFalse(self.app._save_rows(show_error=False))
+        self.assertEqual(self.store.saved, [])
+        self.assertEqual(self.store.lives, [live])
+        self.assertFalse(self.app._sheet_is_pristine())
+        self.assertTrue(self.app.start_button.instate(["disabled"]))
+        self.assertTrue(self.app._load_history_live_into_main_sheet(live))
+        self.assertFalse(self.app.sheet_load_error)
+        self.assertEqual(self.app._rows(), [ROW])
+        self.assertTrue(self.app._save_rows(show_error=False))
+        self.assertEqual(self.store.saved, [])
+
+    def test_invalid_saved_rows_do_not_clear_existing_sheet(self):
+        self.fill_row()
+        before = self.app._sheet_data()
+        with patch("app.messagebox.showerror"):
+            self.assertFalse(self.app._apply_saved_state({"live": {"id": "invalid"}, "rows": [None]}))
+        self.assertEqual(self.app._sheet_data(), before)
+        self.assertFalse(self.app.sheet_load_error)
+        self.assertEqual(self.store.saved, [])
+
+    def test_close_after_failed_load_never_saves_the_incomplete_sheet(self):
+        self.app.sheet_load_error = True
+        with patch("app.messagebox.askyesno", return_value=True) as confirm, \
+                patch.object(self.app, "_close_application") as close, \
+                patch.object(self.app, "_save_rows") as save:
+            self.app._on_close()
+        confirm.assert_called_once()
+        self.assertIn("não será salva", confirm.call_args.args[1])
+        save.assert_not_called()
+        close.assert_called_once()
+        self.assertEqual(self.store.saved, [])
+
+    def test_opening_history_from_treeview_preserves_all_rows_without_saving(self):
+        rows = [
+            {**ROW, "cliente": "cliente um"},
+            {**ROW, "valor": "R$ 35,00", "codigo": "002", "cliente": "cliente dois"},
+            {**ROW, "valor": "R$ 50,00", "codigo": "003", "suplente": "suplente"},
+        ]
+        live = {"id": "old", "started_at": "2026-09-01T12:00:00",
+                "finished_at": "2026-09-01T13:00:00", "duration": "01:00:00",
+                "total": "R$ 55,00", "pieces_count": 3, "sold_count": 2,
+                "clients_count": 2, "rows": rows}
+        self.store.lives = [copy.deepcopy(live)]
+        window, tree, buttons = self.history_widgets()
+        tree.selection_set("month_2026_9_live_0")
+        self.app.update()
+
+        buttons["Abrir na planilha principal"].invoke()
+
+        self.assertFalse(window.winfo_exists())
+        self.assertEqual(self.app.live_id, "old")
+        self.assertEqual(self.app._rows(), rows)
+        self.store.begin_edit.assert_called_once_with("old", history=live)
+        self.assertEqual(self.store.saved, [])
+        self.assertTrue(self.app._save_rows())
+        self.assertEqual(self.store.saved, [])
+        self.assertEqual(self.store.lives, [live])
+
     def test_history_uses_store_and_non_admin_has_no_delete_action(self):
         self.store.lives = [{"id": "a", "finished_at": "2026-09-01", "total": "R$ 20,00"}]
         _window, tree, buttons = self.history_widgets()
