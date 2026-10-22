@@ -24,7 +24,8 @@ jobs:
           python-version: '3.13'
           architecture: x64
       - name: Preparar dependências
-        run: python -m pip install --disable-pip-version-check --only-binary=:all: -r requirements-build.txt
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary=:all: -r requirements-build.txt
       - name: Testar com serviços simulados
         run: python -m unittest discover -s tests
 
@@ -63,7 +64,8 @@ jobs:
           }
       - name: Preparar compilação
         if: steps.version.outputs.exists != 'true'
-        run: python -m pip install --disable-pip-version-check --only-binary=:all: -r requirements-build.txt
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary=:all: -r requirements-build.txt
       - name: Montar e verificar os executáveis
         if: steps.version.outputs.exists != 'true'
         run: python build_release.py --installer-source
