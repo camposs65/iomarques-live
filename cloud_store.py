@@ -15,6 +15,8 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from live_profiles import (DEFAULT_MESSAGES, MARQUES_BRECHO, PROFILE_NAMES, normalize_profile,
+                           validate_message_template)
 from supabase_sync import (
     SESSION_FILENAME, RETRY_SECONDS, SupabaseHistorySync, SyncError, SyncAuthError,
     SyncTemporaryError, _atomic_write, _protect_windows, _unprotect_windows,
@@ -25,6 +27,7 @@ from supabase_sync import (
 OUTBOX_FILENAME = "cloud_pendencias.dat"
 MIGRATION_FILENAME = "cloud_migracao.json"
 REFRESH_SECONDS = 60
+MAX_PROFILE_VERSION = 9007199254740991
 
 
 class CloudConflictError(SyncTemporaryError):
@@ -40,6 +43,14 @@ class CloudStorageError(SyncTemporaryError):
 
 
 class CloudInactiveError(SyncAuthError):
+    pass
+
+
+class CloudProfileConflictError(SyncTemporaryError):
+    pass
+
+
+class CloudProfilesUnavailableError(SyncTemporaryError):
     pass
 
 
@@ -95,6 +106,12 @@ class CloudLiveStore(SupabaseHistorySync):
         self._last_profile = 0.0
         self._force_pull = True
         self._force_profile = True
+        self._perfis_live = {}
+        self._erro_perfis = ""
+        self._last_perfis = 0.0
+        self._force_perfis = True
+        self._perfis_revision = 0
+        self._perfil_rpc_context = threading.local()
         self._generation = 0
         self._migration_done = self._read_migration_marker()
         self._read_outbox()
@@ -124,6 +141,177 @@ class CloudLiveStore(SupabaseHistorySync):
     def is_admin(self):
         with self.lock:
             return self._is_admin and self.is_authenticated
+
+    @property
+    def contexto_autenticacao(self):
+        """Non-secret marker for discarding GUI callbacks from an older login."""
+        with self.lock:
+            return self._generation
+
+    @property
+    def perfis_disponiveis(self):
+        with self.lock:
+            return (not self.closed and not self._auth_blocked and self.is_authenticated
+                    and set(self._perfis_live) == set(PROFILE_NAMES))
+
+    @property
+    def erro_perfis(self):
+        with self.lock:
+            return self._erro_perfis
+
+    def perfis_live(self):
+        """Return confirmed templates from RAM, never from an on-disk cache."""
+        with self.lock:
+            return _clone(self._perfis_live)
+
+    @staticmethod
+    def _valid_perfil_live(item):
+        if (not isinstance(item, dict) or not isinstance(item.get("perfil"), str)
+                or item["perfil"] not in PROFILE_NAMES
+                or type(item.get("versao")) is not int
+                or not 1 <= item["versao"] <= MAX_PROFILE_VERSION):
+            raise SyncTemporaryError("O Supabase não confirmou a versão do modelo de mensagem.")
+        try:
+            validate_message_template(item.get("mensagem_cliente"))
+        except ValueError as exc:
+            raise SyncTemporaryError("O Supabase retornou um modelo de mensagem incompleto.") from exc
+        return _clone(item)
+
+    def _refresh_perfis_live(self, generation):
+        with self.lock:
+            if generation != self._generation or self.closed:
+                return False
+            revision = self._perfis_revision
+        try:
+            response = self._rpc_perfil_live("listar_perfis_live_app", {}, generation)
+            if not isinstance(response, list) or len(response) != len(PROFILE_NAMES):
+                raise SyncTemporaryError("O Supabase não confirmou os dois perfis das lives.")
+            confirmed = {}
+            for value in response:
+                record = self._valid_perfil_live(value)
+                if record["perfil"] in confirmed:
+                    raise SyncTemporaryError("O Supabase retornou perfis de live repetidos.")
+                confirmed[record["perfil"]] = record
+            with self.lock:
+                if generation != self._generation or self.closed or revision != self._perfis_revision:
+                    return False
+                for perfil, record in confirmed.items():
+                    previous = self._perfis_live.get(perfil)
+                    if previous and (record["versao"] < previous["versao"]
+                                     or (record["versao"] == previous["versao"]
+                                         and record["mensagem_cliente"] != previous["mensagem_cliente"])):
+                        raise SyncTemporaryError("O Supabase não confirmou uma leitura atualizada dos modelos.")
+                self._perfis_live = confirmed
+                self._erro_perfis = ""
+                self._last_perfis = time.monotonic()
+                self._perfis_revision += 1
+        except SyncError as exc:
+            with self.lock:
+                if generation != self._generation or self.closed or revision != self._perfis_revision:
+                    return False
+                self._erro_perfis = str(exc)
+                self._last_perfis = time.monotonic()
+            # Missing optional RPCs must never prevent saving existing Io lives.
+            self._notify_data()
+            return False
+        self._notify_data()
+        return True
+
+    def _complete_perfis_live(self, generation, completion, success, detail, record):
+        with self.lock:
+            if completion and generation == self._generation and not self.closed:
+                try:
+                    completion(success, detail, _clone(record))
+                except Exception:
+                    # UI callback failures must not reinterpret an acknowledged write.
+                    pass
+
+    def _rpc_perfil_live(self, name, arguments, generation):
+        # Bind authentication retries to the account that opened this operation.
+        self._perfil_rpc_context.generation = generation
+        try:
+            return self._rpc(name, arguments)
+        finally:
+            del self._perfil_rpc_context.generation
+
+    def salvar_mensagem_perfil_live(self, perfil, mensagem, versao_esperada, completion=None):
+        """Save the shared template directly, using the editor's pinned revision.
+
+        An unsaved editor stays in memory in the GUI. Its text never enters the
+        live outbox, and a successful callback requires an exact server reply.
+        """
+        with self.lock:
+            generation = self._generation
+
+        def worker():
+            try:
+                if perfil != MARQUES_BRECHO:
+                    raise ValueError("Somente a mensagem do Marques Brechó pode ser editada.")
+                validate_message_template(mensagem)
+                if (type(versao_esperada) is not int
+                        or not 1 <= versao_esperada < MAX_PROFILE_VERSION):
+                    raise ValueError("A versão do modelo não foi confirmada. Reabra o editor e tente novamente.")
+                with self.lock:
+                    if generation != self._generation or self.closed:
+                        return
+                    if not self.config or not self.perfis_disponiveis:
+                        raise SyncTemporaryError("Carregue os perfis do Supabase antes de salvar a mensagem.")
+                record = self._valid_perfil_live(self._rpc_perfil_live("salvar_mensagem_perfil_live", {
+                    "p_perfil": perfil, "p_mensagem_cliente": mensagem,
+                    "p_versao_esperada": versao_esperada,
+                }, generation))
+                if (record["perfil"] != perfil or record["mensagem_cliente"] != mensagem
+                        or record["versao"] not in {versao_esperada, versao_esperada + 1}):
+                    raise SyncTemporaryError("O Supabase não confirmou exatamente a mensagem enviada.")
+                with self.lock:
+                    if generation != self._generation or self.closed:
+                        return
+                    previous = self._perfis_live.get(perfil)
+                    if previous and (record["versao"] < previous["versao"]
+                                     or (record["versao"] == previous["versao"]
+                                         and record["mensagem_cliente"] != previous["mensagem_cliente"])):
+                        raise SyncTemporaryError("O modelo mudou durante o salvamento. Confira a mensagem antes de tentar novamente.")
+                    self._perfis_live[perfil] = record
+                    self._erro_perfis = ""
+                    self._perfis_revision += 1
+                self._notify_data()
+                self._complete_perfis_live(generation, completion, True,
+                                           "Mensagem confirmada no Supabase.", record)
+            except (SyncError, ValueError) as exc:
+                with self.lock:
+                    if generation != self._generation or self.closed:
+                        return
+                    if isinstance(exc, SyncError):
+                        self._erro_perfis = str(exc)
+                self._complete_perfis_live(generation, completion, False, str(exc), None)
+                self._notify_data()
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def recarregar_perfis_live(self, completion=None):
+        """Explicitly reload templates without changing an open editor's text."""
+        with self.lock:
+            generation = self._generation
+
+        def worker():
+            with self.lock:
+                if generation != self._generation or self.closed:
+                    return
+                available = self.config and self.is_authenticated and not self._auth_blocked
+            if available:
+                success = self._refresh_perfis_live(generation)
+            else:
+                success = False
+            with self.lock:
+                if generation != self._generation or self.closed:
+                    return
+                detail = ("Modelos confirmados no Supabase." if success else self._erro_perfis
+                          or ("Os modelos mudaram durante a leitura. Tente recarregar novamente."
+                              if available else "Entre com uma conta ativa para carregar os modelos de mensagem."))
+                records = _clone(self._perfis_live) if success else None
+            self._complete_perfis_live(generation, completion, success, detail, records)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def state_pending(self, live_id):
         with self.lock:
@@ -280,6 +468,24 @@ class CloudLiveStore(SupabaseHistorySync):
                                     or history.get("id") != live_id
                                     or prepare_live_payload(history) is None):
             raise ValueError("Invalid history")
+        metadata = [state["live"] if state is not None else None, history]
+        for value in metadata:
+            if value is None or not ({"perfil", "mensagem_cliente"} & value.keys()):
+                continue
+            if (not {"perfil", "mensagem_cliente"} <= value.keys()
+                    or not isinstance(value["perfil"], str)
+                    or value["perfil"] not in PROFILE_NAMES):
+                raise ValueError("Invalid live profile metadata")
+            validate_message_template(value["mensagem_cliente"])
+        if state is not None and history is not None:
+            state_profile = normalize_profile(state["live"].get("perfil"))
+            history_profile = normalize_profile(history.get("perfil"))
+            if state_profile != history_profile:
+                raise ValueError("Inconsistent live profile")
+            state_message = state["live"].get("mensagem_cliente", DEFAULT_MESSAGES[state_profile])
+            history_message = history.get("mensagem_cliente", DEFAULT_MESSAGES[history_profile])
+            if state_message != history_message:
+                raise ValueError("Inconsistent live message snapshot")
         # Reject non-JSON objects and NaN before they reach the encrypted outbox.
         json.dumps(document, ensure_ascii=False, allow_nan=False)
 
@@ -536,6 +742,7 @@ class CloudLiveStore(SupabaseHistorySync):
         with self.lock:
             self._force_pull = True
             self._force_profile = True
+            self._force_perfis = True
         if self._storage_blocked or not self.config or not self.is_authenticated:
             self.start()
         else:
@@ -551,6 +758,11 @@ class CloudLiveStore(SupabaseHistorySync):
             self._deleted_ids.clear()
             self._force_pull = True
             self._force_profile = True
+            self._perfis_live = {}
+            self._erro_perfis = ""
+            self._last_perfis = 0.0
+            self._force_perfis = True
+            self._perfis_revision += 1
             if self.timer:
                 self.timer.cancel()
                 self.timer = None
@@ -566,11 +778,17 @@ class CloudLiveStore(SupabaseHistorySync):
         with self.lock:
             self._generation += 1
             generation = self._generation
+            self.session = None
             self._is_admin = False
             self._cloud_loaded = False
             self._remote = {}
             self._force_pull = True
             self._force_profile = True
+            self._perfis_live = {}
+            self._erro_perfis = ""
+            self._last_perfis = 0.0
+            self._force_perfis = True
+            self._perfis_revision += 1
         username = str(username or "").strip().lower()
 
         def worker():
@@ -603,6 +821,9 @@ class CloudLiveStore(SupabaseHistorySync):
 
     def _refresh_session(self):
         with self.lock:
+            expected = getattr(self._perfil_rpc_context, "generation", self._generation)
+            if expected != self._generation or self.closed:
+                raise SyncAuthError("A conta foi desconectada.")
             current = dict(self.session or {})
             generation = self._generation
         if not current.get("refresh_token"):
@@ -620,8 +841,23 @@ class CloudLiveStore(SupabaseHistorySync):
                 raise SyncTemporaryError("Não foi possível atualizar a sessão protegida neste computador.") from exc
         return refreshed["access_token"]
 
+    def _access_token(self):
+        with self.lock:
+            expected = getattr(self._perfil_rpc_context, "generation", self._generation)
+            if expected != self._generation or self.closed:
+                raise SyncAuthError("A conta foi desconectada.")
+            current = dict(self.session or {})
+        if int(current.get("expires_at", 0) or 0) <= int(time.time()) + 60:
+            return self._refresh_session()
+        token = str(current.get("access_token", "") or "")
+        return token if token else self._refresh_session()
+
     def _request_json(self, path, payload, access_token=None):
         """Classify only known error codes; never expose arbitrary server text."""
+        perfil_request = path in {
+            "/rest/v1/rpc/listar_perfis_live_app",
+            "/rest/v1/rpc/salvar_mensagem_perfil_live",
+        }
         body = None if payload is None else json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
         headers = {"apikey": self.config.publishable_key, "Content-Type": "application/json"}
         if access_token:
@@ -638,6 +874,16 @@ class CloudLiveStore(SupabaseHistorySync):
                 message = str(body.get("message", "")) if isinstance(body, dict) else ""
             except (ValueError, UnicodeError):
                 message = ""
+            if perfil_request and "PERFIL_LIVE_CONFLITO" in message:
+                raise CloudProfileConflictError(
+                    "Outra pessoa alterou a mensagem do Marques Brechó. Seu texto foi preservado; "
+                    "confira o modelo atual antes de tentar novamente."
+                ) from exc
+            if "PERFIL_LIVE_ATUALIZE" in message:
+                raise SyncTemporaryError(
+                    "Esta live possui dados de perfil protegidos. Atualize o aplicativo antes de continuar; "
+                    "as alterações pendentes foram preservadas."
+                ) from exc
             if "LIVE_EXCLUIDA" in message:
                 raise CloudDeletedError("Esta live já foi excluída no Supabase.") from exc
             if "LIVE_CONFLITO" in message:
@@ -645,9 +891,19 @@ class CloudLiveStore(SupabaseHistorySync):
             if exc.code in {401, 403} or (path.startswith("/auth/v1/") and exc.code == 400):
                 raise SyncAuthError("Entre novamente com uma conta ativa para continuar.") from exc
             if "schema cache" in message.lower() or exc.code == 404:
+                if perfil_request:
+                    raise CloudProfilesUnavailableError(
+                        "A atualização dos perfis de live ainda precisa ser aplicada no Supabase."
+                    ) from exc
                 raise SyncTemporaryError("A atualização dos dados completos ainda não foi aplicada no Supabase.") from exc
+            if perfil_request:
+                raise SyncTemporaryError("O Supabase não confirmou o modelo de mensagem. Mantenha o editor aberto e tente novamente.") from exc
             raise SyncTemporaryError("O Supabase não confirmou a gravação. A alteração continua pendente.") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            if perfil_request:
+                raise SyncTemporaryError(
+                    "Sem conexão para confirmar o modelo. Mantenha o editor aberto e tente novamente."
+                ) from exc
             raise SyncTemporaryError("Aguardando conexão. As alterações pendentes continuam protegidas neste computador.") from exc
         except (ValueError, UnicodeError) as exc:
             raise SyncTemporaryError("O Supabase respondeu de forma inesperada; nenhum envio foi dado como confirmado.") from exc
@@ -810,8 +1066,10 @@ class CloudLiveStore(SupabaseHistorySync):
             generation = self._generation
             refresh = self._force_pull or not self._cloud_loaded or time.monotonic() - self._last_pull >= REFRESH_SECONDS
             profile_due = self._force_profile or not self._cloud_loaded or time.monotonic() - self._last_profile >= REFRESH_SECONDS
+            perfis_due = self._force_perfis or time.monotonic() - self._last_perfis >= REFRESH_SECONDS
             self._force_pull = False
             self._force_profile = False
+            self._force_perfis = False
         success = False
         try:
             if not self.config or not self.is_authenticated:
@@ -856,6 +1114,11 @@ class CloudLiveStore(SupabaseHistorySync):
             if self.conflicts():
                 self._pull(generation)
             self._finish_migration_if_confirmed()
+            if perfis_due:
+                self._refresh_perfis_live(generation)
+                with self.lock:
+                    if generation != self._generation or self.closed:
+                        return
             success = True
             if self.has_pending:
                 self._emit_pending()
@@ -869,6 +1132,9 @@ class CloudLiveStore(SupabaseHistorySync):
                 self._auth_blocked = True
                 self._cloud_loaded = False
                 self._remote = {}
+                self._perfis_live = {}
+                self._erro_perfis = str(exc)
+                self._perfis_revision += 1
             self._emit("auth_required", str(exc))
             self._notify_data()
         except SyncAuthError as exc:

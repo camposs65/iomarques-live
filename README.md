@@ -1,4 +1,4 @@
-# IoMarques Brechó — Controle de Vendas da Live · v1.7.4
+# IoMarques Brechó — Controle de Vendas da Live · v1.9.0
 
 Aplicativo para Windows usado para anotar as peças durante as lives no Instagram. O Supabase guarda a live em andamento e o histórico completo; a instalação prepara o programa e cria o atalho na Área de Trabalho.
 
@@ -6,7 +6,7 @@ Aplicativo para Windows usado para anotar as peças durante as lives no Instagra
 
 Requisitos: Windows 10 ou 11 de 64 bits (x64), internet e um usuário do Controle do Brechó. Não é necessário instalar Python manualmente ou executar comandos.
 
-1. No GitHub, abra este repositório e escolha **Code → Download ZIP**.
+1. No GitHub, abra **Releases** e baixe o arquivo `IoMarquesLive-v1.9.0-Instalacao.zip` da versão mais recente. Também é possível usar **Code → Download ZIP** neste repositório.
 2. Clique com o botão direito no ZIP e escolha **Extrair Tudo**. Não execute o instalador de dentro do arquivo compactado.
 3. Abra a pasta extraída e dê dois cliques em **Instalar.bat**.
 4. Aguarde a preparação inicial e a janela de progresso. Na primeira instalação, o download e a montagem do aplicativo podem levar alguns minutos; mantenha a internet conectada.
@@ -21,12 +21,24 @@ A instalação não abre o aplicativo automaticamente nem acessa ou modifica o S
 
 ### Atualizar sem perder dados
 
-1. Confira se o aplicativo terminou de enviar as alterações e feche-o antes de atualizar. Não mantenha a versão antiga e a nova abertas ao mesmo tempo.
-2. Baixe e extraia a versão nova do repositório e execute novamente `Instalar.bat`.
-3. A instalação existente tem prioridade: seus dados de uso diário não são substituídos pelos arquivos da pasta baixada.
-4. Se ainda não houver dados na pasta de instalação permanente, o instalador procura a versão antiga pelo atalho da Área de Trabalho. Sem esse atalho, verifica a pasta do projeto e sua subpasta `dist`. Se houver mais de uma origem possível, pede que você escolha a pasta usada pelo aplicativo da loja.
+1. Instale a versão 1.9.0 ou posterior manualmente uma última vez em cada computador, seguindo as etapas anteriores.
+2. Nas próximas versões, o aplicativo consulta as publicações do GitHub ao abrir e baixa o pacote novo em segundo plano. Falhas de conexão não impedem o uso da versão atual.
+3. Quando estiver pronto, use **Atualizar e reiniciar**. A aplicação da atualização é bloqueada durante uma live ou enquanto houver envios pendentes; conclua essas etapas primeiro.
+4. A atualização troca somente os arquivos do programa, preservando sessão, fila de alterações, histórico antigo e configurações da instalação. O app é reaberto depois da troca. Não abra outra instância enquanto a atualização estiver em andamento.
+
+A versão e a integridade do pacote são conferidas antes da instalação. Se a troca falhar, o atualizador tenta restaurar os arquivos anteriores; se a recuperação também falhar, conserva as cópias para diagnóstico e informa o local. Não apague arquivos de recuperação nem os dados da loja.
+
+A instalação manual continua disponível: feche o app depois de confirmar os envios, baixe e extraia o instalador novo e execute `Instalar.bat`. A instalação existente tem prioridade sobre arquivos da pasta baixada. Se ainda não houver dados na pasta permanente, o instalador procura a versão antiga pelo atalho da Área de Trabalho; depois verifica a pasta do projeto e sua subpasta `dist`. Quando houver mais de uma origem possível, pede a escolha da pasta usada na loja.
 
 Os dados antigos são copiados, nunca removidos da origem. Não apague a pasta antiga, `dist` ou seus backups até conferir a migração completa no Supabase. A sessão e a fila criptografada pertencem ao usuário do Windows daquele computador: não transporte esses arquivos para outro PC. Em outro computador, faça uma instalação nova e entre na conta para carregar os dados já confirmados na nuvem.
+
+### O outro computador atualiza sozinho?
+
+Sim, depois de instalar a versão 1.9.0 ou posterior manualmente uma última vez nesse computador. O app passa a consultar o GitHub ao abrir e baixar novas versões publicadas. Para aplicar, basta clicar em `Atualizar e reiniciar`, fora de uma live e sem envios pendentes. Cada computador faz essa verificação por conta própria; não precisa ficar com o outro computador ligado.
+
+Se o computador possui uma cópia do projeto pelo Git, `git pull` atualiza somente o código-fonte, não o executável do atalho. Com o atualizador instalado, use o aviso do próprio app. Sem ele, execute `Instalar.bat` na pasta atualizada. Não copie sessões ou filas de um computador para outro e não desinstale nem apague dados para atualizar.
+
+As preparações do Supabase são executadas uma única vez por projeto de banco, não em cada computador. A atualização do programa não executa queries automaticamente; para os novos perfis, conclua a preparação descrita em `Perfil e mensagem do Marques Brechó` antes de usá-los.
 
 ### Se a instalação falhar
 
@@ -48,6 +60,7 @@ Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-public
 
 ## Como usar durante a live
 
+- Antes de iniciar, escolha `Io Marques` ou `Marques Brechó` no interruptor de perfil. O masculino usa preto, branco e cinza; Io Marques mantém suas cores habituais.
 - Clique em `Iniciar live` no momento em que a gravação da live começar.
 - O contador fica rodando no canto superior direito.
 - Ao preencher `Valor` ou `Código`, o app salva automaticamente o `Tempo` daquela peça.
@@ -56,7 +69,7 @@ Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-public
 - Ao finalizar, a live entra no histórico automaticamente.
 - A live é salva a cada edição e também a cada 10 segundos enquanto o app estiver aberto.
 - Clique em uma célula para editar.
-- Quando o campo `Cliente` estiver preenchido, a linha fica levemente verde.
+- Quando o campo `Cliente` estiver preenchido, a linha fica destacada; no perfil masculino, o destaque é cinza.
 - Digitar na última linha vazia cria outra linha automaticamente.
 - Os dados são enviados automaticamente ao Supabase. Se houver queda de conexão, ficam protegidos na fila temporária até o envio ser confirmado.
 - Ao digitar `39,90` no valor, o app transforma em `R$ 39,90`.
@@ -66,6 +79,16 @@ Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-public
 - Use a setinha no cabeçalho de cada coluna para filtrar, como no Excel.
 - Passe o mouse sobre `Cliente` ou `Suplente` para mostrar o `X` de remoção.
 - Durante a live, o cabeçalho grande da marca fica escondido para dar mais espaço à planilha.
+
+### Perfil e mensagem do Marques Brechó
+
+O interruptor funciona antes do primeiro início da live. Depois de iniciar, o perfil e a mensagem ficam vinculados àquela live, inclusive ao finalizar ou reabri-la pelo histórico. Use `Nova live / Limpar tudo` para preparar outra live e escolher seu perfil. Lives antigas sem essa identificação continuam como Io Marques.
+
+No perfil masculino, clique em `Mensagem do masculino` para editar o modelo compartilhado. A janela mostra uma prévia e aceita `{cliente}` para o @ da pessoa, `{pecas}` para as peças e os valores, e `{total}` para o total da compra. Mantenha `{pecas}` e `{total}` no texto; o @ sempre será incluído, mesmo se você omitir `{cliente}`.
+
+O modelo só é considerado salvo depois da confirmação do Supabase. Essa alteração fica disponível nos outros computadores e nas próximas lives do Marques Brechó; um rascunho ainda não iniciado também pode recebê-la. Cada live iniciada conserva uma cópia da mensagem que estava escolhida naquele momento. Editar o modelo posteriormente não altera mensagens de lives em andamento ou antigas. A mensagem de Io Marques mantém o modelo existente.
+
+Antes de usar os dois perfis, o responsável deve executar pessoalmente no Supabase a migration `supabase/migrations/20261022000100_perfis_app_live.sql`, disponível no repositório `brecho-controle`. Ela prepara os modelos compartilhados e a identificação por live, preservando os documentos anteriores. O instalador não executa essa query. O acesso aos modelos exige uma administradora ativa, assim como os documentos completos do desktop.
 
 ## Dados completos no Supabase
 
@@ -87,7 +110,7 @@ Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-public
 
 A estrutura de nuvem depende da migration `supabase/migrations/20260917000200_dados_completos_app_live.sql` do projeto `brecho-controle` e das migrations anteriores. Essa preparação é feita pelo responsável pelo banco, não pelo instalador. Sem a estrutura necessária, o aplicativo não confirma a gravação na nuvem. As importações antigas não podem sobrescrever os resumos das lives já gerenciadas pela versão com dados completos.
 
-Para manter a comissão igual no Controle do Brechó e no desktop v1.7.4, aplique `supabase/migrations/20261012000100_comissao_live_sem_adicional.sql` no projeto `brecho-controle`. A migration remove o adicional e recalcula a coluna de comissão das lives existentes e futuras; não é necessário reenviar históricos nem alterar os totais vendidos. O usuário executará a query pessoalmente no Supabase. Não reaplique as migrations antigas de R$ 50 ou R$ 20.
+Para manter a comissão igual no Controle do Brechó e no desktop, aplique `supabase/migrations/20261012000100_comissao_live_sem_adicional.sql` no projeto `brecho-controle`. A migration remove o adicional e recalcula a coluna de comissão das lives existentes e futuras; não é necessário reenviar históricos nem alterar os totais vendidos. O usuário executará a query pessoalmente no Supabase. Não reaplique as migrations antigas de R$ 50 ou R$ 20.
 
 ### Configuração da conexão
 
@@ -153,3 +176,11 @@ python -m venv .venv
 Abrir `app.py` inicia o aplicativo real, incluindo sua sincronização; não use essa ação como teste isolado de banco. A suíte automatizada utiliza serviços simulados. `requirements-build.txt` reúne as dependências da instalação e da geração do executável. Não é necessário executá-las manualmente para usar o programa.
 
 A automação de Directs é um projeto separado, `iomarques-instagram-direct`, com requisitos próprios. A instalação preserva seu caminho quando encontra esse projeto; não instala o automatizador nem copia credenciais dele. Jogos, exportação e impressão continuam incluídos no aplicativo principal.
+
+### Publicar uma atualização
+
+Altere `APP_VERSION` em `app.py` para uma versão nova no formato `X.Y.Z` e mantenha a documentação e os testes de versão alinhados. Depois do commit e push para `main`, o workflow `Publicar aplicativo Windows` testa o app com serviços simulados, compila o aplicativo e o atualizador no Windows e verifica os dois sem abrir a interface ou conectar ao Supabase. Só depois cria a tag e a Release correspondentes. Uma versão já publicada não é sobrescrita: para novas mudanças, aumente a versão novamente.
+
+O arquivo `IoMarquesLive-Windows-x64.zip` contém somente os dois executáveis, a configuração pública e `release.json` com versão, tamanho e SHA-256 de cada arquivo. O instalador de primeiro acesso é publicado separadamente como `IoMarquesLive-vX.Y.Z-Instalacao.zip`, usando uma lista fechada de fontes e recursos. `SHA256SUMS` registra os hashes dos ZIPs. Nenhum desses pacotes inclui sessões, filas, histórico ou backups da loja. Não coloque senhas, tokens ou chaves secretas na configuração pública.
+
+Para uma montagem local isolada, instale `requirements-build.txt` no ambiente de desenvolvimento e execute `python build_release.py --installer-source`. Os arquivos saem em `dist`; não são instalados nem publicados por esse comando. A atualização de software nunca executa SQL nem altera a estrutura do Supabase. Migrations continuam sendo uma ação separada e autorizada pelo responsável.

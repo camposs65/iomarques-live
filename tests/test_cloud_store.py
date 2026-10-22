@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 
 import cloud_store
 from cloud_store import CloudConflictError, CloudDeletedError, CloudLiveStore
+from live_profiles import DEFAULT_MESSAGES
 from supabase_sync import SyncAuthError, SyncConfig, SyncTemporaryError
 
 
@@ -56,6 +57,9 @@ class FakeCloud:
 
     def rpc(self, name, arguments):
         self.calls.append((name, copy.deepcopy(arguments)))
+        if name == "listar_perfis_live_app":
+            return [{"perfil": key, "mensagem_cliente": value, "versao": 1}
+                    for key, value in DEFAULT_MESSAGES.items()]
         if name == "listar_versoes_lives":
             return [{"id": key, "versao": self.rows[key]["versao"]} for key in sorted(self.rows)
                     if key > arguments["p_apos_id"]][:arguments["p_limite"]]

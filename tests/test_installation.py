@@ -21,7 +21,9 @@ class InstallationTests(unittest.TestCase):
         for path in (self.package, self.source, self.old):
             path.mkdir()
         self.write(self.package / installer.EXE_NAME, b"new executable")
+        self.write(self.package / installer.UPDATER_EXE, b"new updater")
         self.write(self.package / "integracao_supabase.json", b'{"public": true}')
+        installer.release_manifest(self.package, "1.9.0")
 
     @staticmethod
     def write(path, data):
@@ -33,7 +35,7 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(exe.parent, self.target)
         self.assertEqual(exe.read_bytes(), b"new executable")
         self.assertEqual(set(p.name for p in self.target.iterdir()),
-                         {installer.EXE_NAME, "integracao_supabase.json", "instalacao.json"})
+                         set(installer.PACKAGE_FILES) | {"instalacao.json"})
 
     def test_legacy_copy_preserves_originals_and_ignores_unknown_files(self):
         self.write(self.old / "cloud_pendencias.dat", b"encrypted changes")
@@ -134,6 +136,22 @@ class InstallationTests(unittest.TestCase):
         self.assertEqual(set(saved), {"installer_version", "automation_app"})
         self.assertEqual(installer.find_automation(self.source, destination=self.target), str(automation))
 
+    def test_update_preserves_all_previous_installation_metadata(self):
+        self.target.mkdir()
+        previous = {"automation_app": "C:/loja/direct/app.py", "installer_version": 1,
+                    "future_setting": {"enabled": True}, "manual_choice": "preservar"}
+        (self.target / "instalacao.json").write_text(json.dumps(previous), encoding="utf-8")
+        installer.deploy_package(self.package, self.target)
+        saved = json.loads((self.target / "instalacao.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved, previous)
+
+    def test_invalid_installation_metadata_blocks_update_without_replacement(self):
+        self.write(self.target / "instalacao.json", b"invalid json")
+        self.write(self.target / installer.EXE_NAME, b"old executable")
+        with self.assertRaisesRegex(RuntimeError, "instalação anterior"):
+            installer.deploy_package(self.package, self.target)
+        self.assertEqual((self.target / installer.EXE_NAME).read_bytes(), b"old executable")
+
     def test_local_install_directory_is_not_download_or_desktop(self):
         with patch.dict(os.environ, {"LOCALAPPDATA": str(self.root)}):
             self.assertEqual(installer.install_directory(), self.root / "Programs" / "IoMarquesLive")
@@ -176,6 +194,18 @@ class InstallationTests(unittest.TestCase):
         with patch.object(installer, "_powershell", return_value=processes):
             with self.assertRaisesRegex(RuntimeError, "Feche"):
                 installer.ensure_app_closed(self.source)
+
+    def test_relative_python_source_blocks_both_profile_windows(self):
+        for title in ("Marques Brechó - Controle de Vendas da Live · v1.8.0",
+                      "Io Marques - Controle de Vendas da Live · v1.8.0"):
+            with self.subTest(title=title):
+                processes = json.dumps([{
+                    "name": "pythonw.exe", "command": '"C:\\Python\\pythonw.exe" .\\app.py',
+                    "title": title,
+                }])
+                with patch.object(installer, "_powershell", return_value=processes):
+                    with self.assertRaisesRegex(RuntimeError, "Feche"):
+                        installer.ensure_app_closed(self.source)
 
     def test_other_python_projects_do_not_block_install(self):
         commands = [
@@ -302,8 +332,10 @@ class InstallationTests(unittest.TestCase):
         self.assertIn("GetFolderPath('Desktop')", command)
 
     def test_build_allowlist_never_includes_runtime_or_published_backups(self):
+        self.assertIn("live_profiles.py", installer.SOURCE_FILES)
         for name in installer.SOURCE_FILES:
             self.write(self.source / name, b"pass")
+        self.write(self.source / "app.py", b'APP_VERSION = "1.9.0"\n')
         for name in installer.ASSET_FILES:
             self.write(self.source / "assets" / name, b"asset")
         self.write(self.source / "integracao_sessao.dat", b"private session")
@@ -316,12 +348,19 @@ class InstallationTests(unittest.TestCase):
 
         def fake_command(command, cwd, log):
             if "PyInstaller" in command:
-                self.write(output / installer.EXE_NAME, b"compiled executable")
+                name = command[command.index("--name") + 1]
+                self.write(output / (name + ".exe"), b"compiled executable")
 
         with patch.object(installer, "write_config", side_effect=fake_config), \
                 patch.object(installer, "run_command", side_effect=fake_command) as commands:
             installer.build_package(self.source, output, work, "python", self.root / "log")
-        self.assertEqual(commands.call_args.args[0], [str(output / installer.EXE_NAME), "--verificar-instalacao"])
+        self.assertEqual(commands.call_args_list[-2].args[0],
+                         [str(output / installer.EXE_NAME), "--verificar-instalacao"])
+        self.assertEqual(commands.call_args.args[0],
+                         [str(output / installer.UPDATER_EXE), "--verificar-atualizador"])
+        manifest = json.loads((output / "release.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], "1.9.0")
+        self.assertEqual(set(manifest["files"]), set(installer.PACKAGE_FILES) - {"release.json"})
         staged = {p.relative_to(work / "source").as_posix()
                   for p in (work / "source").rglob("*") if p.is_file()}
         self.assertEqual(staged, set(installer.SOURCE_FILES) | {"config_publica.json"}

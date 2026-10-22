@@ -1,8 +1,11 @@
 """Build and install locally. Never opens the app or contacts its database."""
 
+import ast
+import hashlib
 import json
 import ctypes
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -16,12 +19,50 @@ from preparar_config_integracao import write_config
 
 APP_NAME = "IoMarques Brecho"
 EXE_NAME = f"{APP_NAME}.exe"
-SOURCE_FILES = ("app.py", "cloud_store.py", "supabase_sync.py", "roguelike_game.py",
-                "gerar_assets_logo.py")
+UPDATER_NAME = "IoMarques Atualizador"
+UPDATER_EXE = f"{UPDATER_NAME}.exe"
+SOURCE_FILES = ("app.py", "cloud_store.py", "supabase_sync.py", "live_profiles.py", "roguelike_game.py",
+                "gerar_assets_logo.py", "update_client.py", "update_helper.py", "installation.py",
+                "preparar_config_integracao.py")
 ASSET_FILES = ("logo_original.png", "entregas.png", "avaliacoes.pdf")
 RUNTIME_FILES = ("cloud_pendencias.dat", "cloud_migracao.json", "integracao_sessao.dat",
                  "integracao_pendencias.json", "live_atual.json", "historico_lives.json")
-PACKAGE_FILES = (EXE_NAME, "integracao_supabase.json")
+PACKAGE_FILES = (EXE_NAME, UPDATER_EXE, "integracao_supabase.json", "release.json")
+
+
+def source_version(source):
+    """Read the version without importing or opening the real application."""
+    tree = ast.parse((Path(source) / "app.py").read_text(encoding="utf-8-sig"))
+    for statement in tree.body:
+        if (isinstance(statement, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "APP_VERSION"
+                        for target in statement.targets)):
+            value = ast.literal_eval(statement.value)
+            if isinstance(value, str) and re.fullmatch(
+                r"(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})\.(?:0|[1-9][0-9]{0,8})", value
+            ):
+                return value
+            break
+    raise RuntimeError("Não encontrei uma versão válida no código do aplicativo.")
+
+
+def release_manifest(package, version):
+    """Only distributable program files belong in a release manifest."""
+    package = Path(package)
+    files = {}
+    for name in PACKAGE_FILES:
+        if name == "release.json":
+            continue
+        path = package / name
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        files[name] = {"sha256": digest.hexdigest(), "size": path.stat().st_size}
+    manifest = {"schema": 1, "version": version, "files": files}
+    (package / "release.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return manifest
 
 
 def install_directory():
@@ -105,7 +146,11 @@ def _is_live_process(process, known_scripts):
     title = "".join(char for char in title if not unicodedata.combining(char)).casefold()
     # Relative app.py alone is used by many unrelated projects. Only the
     # identifiable sales window makes a relative invocation ours.
-    return title.startswith("iomarques brecho - controle de vendas da live")
+    return title.startswith((
+        "iomarques brecho - controle de vendas da live",
+        "io marques - controle de vendas da live",
+        "marques brecho - controle de vendas da live",
+    ))
 
 
 def ensure_app_closed(source=None, legacy=None, destination=None):
@@ -235,10 +280,20 @@ def build_package(source, output, work, python, log, progress=lambda *_: None):
         "--add-data", f"{staged_assets};assets",
         "--add-data", f"{staged_source / 'config_publica.json'};.", "app.py",
     ], staged_source, log)
+    progress(65, "Criando o atualizador do aplicativo...")
+    run_command([
+        str(python), "-X", "utf8", "-m", "PyInstaller", "--noconfirm", "--clean",
+        "--onefile", "--windowed", "--name", UPDATER_NAME,
+        "--distpath", str(output), "--workpath", str(work / "build-updater"),
+        "--specpath", str(work), "--icon", str(staged_assets / "app_icon.ico"),
+        "update_helper.py",
+    ], staged_source, log)
+    release_manifest(output, source_version(staged_source))
     for name in PACKAGE_FILES:
         if not (output / name).is_file() or not (output / name).stat().st_size:
             raise RuntimeError(f"O pacote ficou incompleto: {name}.")
     run_command([str(output / EXE_NAME), "--verificar-instalacao"], output, log)
+    run_command([str(output / UPDATER_EXE), "--verificar-atualizador"], output, log)
     return output
 
 
@@ -277,7 +332,17 @@ def deploy_package(package, destination, legacy=None, automation_app=None):
             staged.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(package / name, staged)
             changes.append(Path(name))
-        metadata = {"installer_version": 1}
+        metadata = {}
+        old_metadata = _checked_path(destination / "instalacao.json", destination)
+        if old_metadata.exists():
+            try:
+                metadata = json.loads(old_metadata.read_text(encoding="utf-8"))
+                if not isinstance(metadata, dict):
+                    raise ValueError("invalid metadata")
+            except (OSError, ValueError, UnicodeError) as error:
+                raise RuntimeError("Não foi possível ler os dados da instalação anterior. "
+                                   "A instalação existente foi preservada.") from error
+        metadata["installer_version"] = 1
         if automation_app:
             metadata["automation_app"] = str(automation_app)
         (staging / "new" / "instalacao.json").write_text(

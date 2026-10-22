@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import tkinter as tk
 import time
 import uuid
@@ -19,6 +20,12 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from ctypes import wintypes
 
 from cloud_store import CloudLiveStore
+from update_client import UpdateClient
+from live_profiles import (
+    IO_MARQUES, MARQUES_BRECHO, PROFILE_NAMES, MONOCHROME_COLORS,
+    DEFAULT_MESSAGES, IO_MESSAGE_TEMPLATE, MARQUES_MESSAGE_TEMPLATE,
+    normalize_profile, validate_message_template, render_client_message,
+)
 
 try:
     from openpyxl import Workbook
@@ -30,7 +37,7 @@ except ImportError:
 from roguelike_game import RogueBrechoGame
 
 
-APP_VERSION = "1.7.4"
+APP_VERSION = "1.9.0"
 
 COLUMNS = ("valor", "codigo", "cliente", "suplente", "tempo")
 HEADERS = {
@@ -120,6 +127,13 @@ def find_message_automation_app(app_dir, user_home):
 
 
 class LiveSalesApp(tk.Tk):
+    _MONOCHROME_ACCENTS = {
+        "#6C366B": "#333333", "#5D2F5D": "#080808",
+        "#E3C6E3": "#CDCDCD", "#D8B6D8": "#BBBBBB",
+        "#2E6F47": "#303030", "#E2B56F": "#A0A0A0",
+        "#DDF4E5": "#DADADA",
+    }
+
     def __init__(self):
         super().__init__()
         self.title(f"IoMarques Brechó - Controle de Vendas da Live · v{APP_VERSION}")
@@ -170,6 +184,14 @@ class LiveSalesApp(tk.Tk):
         self.last_save_failed = False
         self.closing = False
         self.initial_pending_recovery = True
+        self.live_profile = IO_MARQUES
+        self.live_message_template = IO_MESSAGE_TEMPLATE
+        self.profile_metadata_enabled = False
+        self.update_client = None
+        self.update_state = "idle"
+        self.update_ready = None
+        self.update_message = ""
+        self.update_applying = False
 
         self._setup_style()
         self._build_ui()
@@ -200,6 +222,7 @@ class LiveSalesApp(tk.Tk):
         self._schedule_periodic_autosave()
         self._bind_shortcuts()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._start_update_checks()
 
     def _asset_path(self, filename):
         path = ASSETS_DIR / filename
@@ -210,7 +233,7 @@ class LiveSalesApp(tk.Tk):
         if path is None:
             return None
         try:
-            image = tk.PhotoImage(file=str(path))
+            image = tk.PhotoImage(master=self, file=str(path))
             if subsample:
                 image = image.subsample(subsample, subsample)
             return image
@@ -218,7 +241,7 @@ class LiveSalesApp(tk.Tk):
             return None
 
     def _setup_style(self):
-        self.configure(bg=COLORS["app_bg"])
+        self.configure(bg=self.colors["app_bg"])
 
         style = ttk.Style(self)
         try:
@@ -228,7 +251,7 @@ class LiveSalesApp(tk.Tk):
 
         style.configure(
             "Primary.TButton",
-            background=COLORS["primary"],
+            background=self.colors["primary"],
             foreground="#FFFFFF",
             font=("Segoe UI Semibold", 10),
             padding=(14, 9),
@@ -237,13 +260,13 @@ class LiveSalesApp(tk.Tk):
         )
         style.map(
             "Primary.TButton",
-            background=[("active", "#6C366B"), ("pressed", "#5D2F5D")],
+            background=[("active", self._theme_color("#6C366B")), ("pressed", self._theme_color("#5D2F5D"))],
             foreground=[("active", "#FFFFFF")],
         )
         style.configure(
             "Secondary.TButton",
-            background=COLORS["secondary"],
-            foreground=COLORS["button_text"],
+            background=self.colors["secondary"],
+            foreground=self.colors["button_text"],
             font=("Segoe UI Semibold", 10),
             padding=(14, 9),
             borderwidth=0,
@@ -251,9 +274,173 @@ class LiveSalesApp(tk.Tk):
         )
         style.map(
             "Secondary.TButton",
-            background=[("active", "#E3C6E3"), ("pressed", "#D8B6D8")],
-            foreground=[("active", COLORS["button_text"])],
+            background=[("active", self._theme_color("#E3C6E3")), ("pressed", self._theme_color("#D8B6D8"))],
+            foreground=[("active", self.colors["button_text"])],
         )
+        style.configure("Treeview", background=self.colors["table_bg"], fieldbackground=self.colors["table_bg"],
+                        foreground=self.colors["text"])
+        style.map("Treeview", background=[("selected", self.colors["primary"])],
+                  foreground=[("selected", "#FFFFFF")])
+        style.configure("Treeview.Heading", background=self.colors["table_header"],
+                        foreground=self.colors["table_header_text"])
+        style.map("Treeview.Heading", background=[("active", self.colors["secondary"])])
+
+    @property
+    def colors(self):
+        # __new__-based tests and old saved lives have the original identity.
+        return MONOCHROME_COLORS if self.__dict__.get("live_profile") == MARQUES_BRECHO else COLORS
+
+    def _theme_color(self, original):
+        if self.__dict__.get("live_profile") != MARQUES_BRECHO:
+            return original
+        fixed_colors = self._MONOCHROME_ACCENTS
+        if original.upper() in fixed_colors:
+            return fixed_colors[original.upper()]
+        for key, color in COLORS.items():
+            if color.lower() == original.lower():
+                return self.colors[key]
+        return original
+
+    def _recolor_profile_widgets(self, widget, previous_colors):
+        if isinstance(widget, RogueBrechoGame) or getattr(widget, "_profile_theme_exempt", False):
+            return
+        options = ("background", "foreground", "activebackground", "activeforeground",
+                   "selectbackground", "selectforeground", "selectcolor", "insertbackground",
+                   "highlightbackground", "highlightcolor", "disabledforeground",
+                   "disabledbackground", "readonlybackground")
+        # Keep semantic colors on the existing widgets. Rebuilding the table would
+        # discard focus, selection, undo history and unsubmitted field contents.
+        bindings = getattr(widget, "_live_theme_options", {})
+        try:
+            available = widget.keys()
+            changes = {}
+            for option in options:
+                if option not in available:
+                    continue
+                current = str(widget.cget(option))
+                old_binding = bindings.get(option)
+                if old_binding is None or current.lower() != old_binding[1].lower():
+                    original = next((COLORS[key] for key, value in previous_colors.items()
+                                     if value.lower() == current.lower()), current)
+                    if original == current and previous_colors["primary"] == MONOCHROME_COLORS["primary"]:
+                        original = next((source for source, value in self._MONOCHROME_ACCENTS.items()
+                                         if value.lower() == current.lower()), current)
+                else:
+                    original = old_binding[0]
+                changed = self._theme_color(original)
+                changes[option] = changed
+                bindings[option] = (original, changed)
+            widget._live_theme_options = bindings
+            if changes:
+                widget.configure(**changes)
+            if isinstance(widget, (tk.Text, ttk.Treeview)):
+                tag_bindings = getattr(widget, "_live_theme_tags", {})
+                for tag in widget.tag_names():
+                    for option in ("background", "foreground"):
+                        config = widget.tag_configure(tag)
+                        if option not in config:
+                            continue
+                        raw = config[option]
+                        current = str(raw[-1] if isinstance(widget, tk.Text) else raw)
+                        if not current:
+                            continue
+                        old_binding = tag_bindings.get((tag, option))
+                        original = old_binding[0] if old_binding and current == old_binding[1] else next(
+                            (COLORS[key] for key, color in previous_colors.items() if color.lower() == current.lower()), current
+                        )
+                        changed = self._theme_color(original)
+                        widget.tag_configure(tag, **{option: changed})
+                        tag_bindings[(tag, option)] = (original, changed)
+                widget._live_theme_tags = tag_bindings
+            for child in widget.winfo_children():
+                self._recolor_profile_widgets(child, previous_colors)
+        except tk.TclError:
+            # A non-modal dialog can be closed while a theme refresh is queued.
+            return
+
+    def _apply_profile_theme(self):
+        previous = self.__dict__.get("_applied_profile_colors", COLORS)
+        self._recolor_profile_widgets(self, previous)
+        self._applied_profile_colors = dict(self.colors)
+        self._setup_style()
+        name = PROFILE_NAMES.get(self.__dict__.get("live_profile"), PROFILE_NAMES[IO_MARQUES])
+        self.title(f"{name} - Controle de Vendas da Live · v{APP_VERSION}")
+        if self.__dict__.get("brand_title_label") is not None:
+            self.brand_title_label.configure(text="Marques Brechó" if self.live_profile == MARQUES_BRECHO else "IoMarques Brechó")
+        logo = self.__dict__.get("brand_logo_label")
+        if logo is not None:
+            if self.live_profile == MARQUES_BRECHO:
+                logo.configure(image="", text="MB", font=("Segoe UI Semibold", 22), padx=8, pady=5)
+            else:
+                logo.configure(image=self.logo_header_image or "", text="" if self.logo_header_image else "IO", padx=0, pady=0)
+        icon = self.__dict__.get("logo_icon_image")
+        if self.live_profile == MARQUES_BRECHO:
+            icon = self.__dict__.get("monochrome_icon_image")
+            if icon is None:
+                icon = tk.PhotoImage(master=self, width=32, height=32)
+                icon.put("#151515", to=(0, 0, 32, 32))
+                # A neutral monogram avoids reusing the pink brand icon.
+                for x1, y1, x2, y2 in ((6, 8, 9, 24), (13, 8, 16, 24), (9, 10, 11, 14),
+                                       (11, 10, 13, 14), (19, 8, 22, 24), (22, 8, 26, 11),
+                                       (22, 14, 26, 17), (22, 21, 26, 24), (25, 10, 28, 15),
+                                       (25, 16, 28, 22)):
+                    icon.put("#FFFFFF", to=(x1, y1, x2, y2))
+                self.monochrome_icon_image = icon
+        if icon is not None:
+            self.iconphoto(True, icon)
+        for row in range(len(self.__dict__.get("row_vars", []))):
+            self._refresh_row_style(row)
+        alert = self.__dict__.get("duplicate_code_alert")
+        if alert is not None:
+            alert.configure(bg=self.colors["warning_bg"], highlightbackground=self._theme_color("#E2B56F"))
+            for child in alert.winfo_children():
+                child.configure(bg=self.colors["warning_bg"], fg=self.colors["warning_text"])
+        sync_button = self.__dict__.get("sync_status_button")
+        if sync_button is not None:
+            status = self.__dict__.get("sync_status")
+            sync_button.configure(fg=self._theme_color("#2E6F47") if status == "synced" else
+                                  self.colors["warning_text"] if status in (
+                                      "pending", "conflict", "error", "deleted", "not_configured"
+                                  ) else self.colors["primary"])
+        self._refresh_profile_controls()
+
+    def _toggle_live_profile(self, _event=None):
+        if self.__dict__.get("_profile_switch_locked", False):
+            return "break"
+        target = IO_MARQUES if self.live_profile == MARQUES_BRECHO else MARQUES_BRECHO
+        self._set_live_profile(target)
+        self._refresh_profile_controls()
+        return "break"
+
+    def _refresh_profile_controls(self):
+        if self.__dict__.get("profile_switch_var") is None:
+            return
+        profile = self.__dict__.get("live_profile", IO_MARQUES)
+        masculine = profile == MARQUES_BRECHO
+        locked = bool(self.__dict__.get("live_first_started_at") or self.__dict__.get("live_running")
+                      or self.__dict__.get("live_finished_at"))
+        self._profile_switch_locked = locked
+        self.profile_switch_var.set(masculine)
+        switch = self.profile_switch_canvas
+        switch.configure(bg=self.colors["secondary"], cursor="arrow" if locked else "hand2",
+                         takefocus=not locked, highlightbackground=self.colors["secondary"],
+                         highlightcolor=self.colors["active_border"])
+        switch.delete("all")
+        track = self.colors["primary"] if masculine else self._theme_color("#D8B6D8")
+        switch.create_oval(4, 5, 28, 29, fill=track, outline=track)
+        switch.create_oval(28, 5, 52, 29, fill=track, outline=track)
+        switch.create_rectangle(16, 5, 40, 29, fill=track, outline=track)
+        knob_x = 39 if masculine else 17
+        switch.create_oval(knob_x - 9, 8, knob_x + 9, 26, fill="#FFFFFF", outline="#FFFFFF")
+        self.profile_status_label.configure(
+            text=f"{PROFILE_NAMES[profile]} · {'perfil da live' if locked else 'escolha antes de iniciar'}",
+            fg=self.colors["text"], bg=self.colors["secondary"],
+        )
+        self.profile_message_button.configure(text="Mensagem do masculino")
+        if masculine:
+            self.profile_message_button.pack(side="right", padx=(12, 0))
+        else:
+            self.profile_message_button.pack_forget()
 
     def _handle_sync_status(self, status, detail, username):
         # O worker nunca chama Tk: a fila é consumida pelo thread da janela.
@@ -261,6 +448,169 @@ class LiveSalesApp(tk.Tk):
 
     def _handle_cloud_data(self, *_args):
         self.cloud_events.put(("data", None))
+
+    def _updates_supported(self):
+        if os.name != "nt" or not getattr(sys, "frozen", False):
+            return False
+        from installation import install_directory
+        try:
+            return APP_DIR.resolve() == install_directory().resolve()
+        except (OSError, RuntimeError):
+            return False
+
+    def _start_update_checks(self):
+        if not self._updates_supported():
+            return
+        try:
+            cache = Path(os.environ["LOCALAPPDATA"]) / "IoMarquesLive" / "atualizacoes"
+            self.update_client = UpdateClient(APP_VERSION, cache, self._handle_update_event)
+            self.update_client.start()
+        except (OSError, ValueError, RuntimeError):
+            self._apply_update_event("error", {"message": "Não foi possível preparar a consulta de atualizações. O aplicativo pode continuar sendo usado."})
+
+    def _handle_update_event(self, event, payload):
+        self.cloud_events.put(("update", (event, payload)))
+
+    def _apply_update_event(self, event, payload):
+        if self.closing:
+            return
+        self.update_state = event
+        if event == "ready":
+            self.update_ready = dict(payload)
+            self.update_message = f"Versão {payload['version']} baixada e verificada."
+        elif event == "downloading":
+            self.update_message = f"Baixando atualização: {int(payload.get('percent', 0))}% · você pode continuar usando o app."
+        elif event == "checking":
+            self.update_message = "Verificando nova versão no GitHub…"
+        elif event == "error":
+            self.update_message = str(payload.get("message", "Não foi possível verificar a atualização. Tente novamente."))
+            if self.update_ready:
+                self.update_state = "ready"
+        elif event == "current":
+            if self.__dict__.get("manual_update_check", False):
+                messagebox.showinfo("Aplicativo atualizado", f"Você já está na versão mais recente: {APP_VERSION}.")
+            self.manual_update_check = False
+        self._refresh_update_controls()
+
+    def _update_block_reason(self):
+        if self.__dict__.get("live_running", False):
+            return "Finalize a live antes de atualizar."
+        editor = self.__dict__.get("profile_message_window")
+        if editor is not None and editor.winfo_exists():
+            return "Feche a janela da mensagem antes de atualizar."
+        if self.__dict__.get("last_save_failed", False):
+            return "Há alterações ainda sem proteção. Tente salvar antes de atualizar."
+        store = self.__dict__.get("sync_manager")
+        if store is None:
+            return "Aguarde a preparação dos dados."
+        if store.has_pending:
+            return "Aguarde a confirmação dos envios pendentes no Supabase."
+        return ""
+
+    def _refresh_update_controls(self):
+        if "update_bar" not in self.__dict__:
+            return
+        state = self.__dict__.get("update_state", "idle")
+        if state in ("idle", "current"):
+            self.update_bar.pack_forget()
+            return
+        if not self.update_bar.winfo_ismapped():
+            self.update_bar.pack(fill="x", padx=24, pady=(10, 0), before=self.toolbar)
+        message = self.__dict__.get("update_message", "")
+        if self.__dict__.get("update_applying", False):
+            message = "Preparando a atualização e o reinício…"
+            enabled, label = False, "Aguarde…"
+        elif state == "ready":
+            reason = self._update_block_reason()
+            enabled, label = not reason, "Atualizar e reiniciar"
+            if reason:
+                message += " " + reason
+        elif state == "error":
+            enabled, label = True, "Tentar novamente"
+        else:
+            enabled, label = False, "Aguarde…"
+        self.update_label.configure(text=message)
+        self.update_button.configure(text=label)
+        self.update_button.state(["!disabled" if enabled else "disabled"])
+
+    def _check_updates(self):
+        if self.__dict__.get("update_client") is None:
+            if self._updates_supported():
+                self.manual_update_check = True
+                self._start_update_checks()
+                return
+            messagebox.showinfo("Atualizações do aplicativo", "A atualização automática funciona no aplicativo instalado pelo Instalar.bat. Nesta cópia de desenvolvimento, atualize o código pelo Git.")
+            return
+        self.manual_update_check = True
+        self.update_client.check_now()
+
+    def _update_action(self):
+        if self.__dict__.get("update_applying", False):
+            return
+        if self.__dict__.get("update_state") != "ready":
+            self._check_updates()
+            return
+        reason = self._update_block_reason()
+        if reason:
+            messagebox.showinfo("Atualização aguardando", reason)
+            return
+        if not self._updates_supported():
+            messagebox.showinfo("Instalação necessária", "Instale o app pelo Instalar.bat para habilitar a atualização automática.")
+            return
+        self._finish_active_cell()
+        if not self._save_rows(show_error=False) or self._update_block_reason():
+            self.sync_manager.sync_now()
+            self._refresh_update_controls()
+            messagebox.showinfo("Aguarde o salvamento", "As alterações precisam ser confirmadas pelo Supabase antes da atualização. Quando os envios terminarem, clique em Atualizar e reiniciar novamente.")
+            return
+        if not messagebox.askyesno("Atualizar aplicativo?", f"Instalar a versão {self.update_ready['version']} e reiniciar o aplicativo?\n\nSeus dados e o atalho serão preservados.", default="no"):
+            return
+        if self._update_block_reason():
+            self._refresh_update_controls()
+            return
+        self.update_applying = True
+        self._refresh_update_controls()
+        ready = dict(self.update_ready)
+
+        def worker():
+            prepared = None
+            try:
+                from update_helper import prepare_update_job
+                cache = Path(os.environ["LOCALAPPDATA"]) / "IoMarquesLive" / "atualizacoes"
+                prepared = prepare_update_job(ready, destination=APP_DIR,
+                                              parent_pid=os.getpid(), parent_executable=sys.executable,
+                                              cache_dir=cache)
+            except Exception:
+                pass
+            self.cloud_events.put(("call", lambda: self._finish_update_preparation(prepared)))
+
+        self.update_prepare_thread = threading.Thread(target=worker, name="PrepararAtualizacao", daemon=True)
+        self.update_prepare_thread.start()
+
+    def _finish_update_preparation(self, prepared):
+        if self.closing:
+            return
+        if prepared is not None:
+            self._finish_active_cell()
+            if not self._save_rows(show_error=False) or self._update_block_reason():
+                self.update_applying = False
+                self._refresh_update_controls()
+                self.sync_manager.sync_now()
+                messagebox.showinfo("Atualização aguardando", "A planilha mudou durante a preparação. Finalize a live e aguarde todos os envios antes de tentar atualizar novamente.")
+                return
+        try:
+            if prepared is None:
+                raise RuntimeError("Update was not prepared")
+            from update_helper import launch_update
+            launch_update(prepared)
+        except Exception:
+            self.update_applying = False
+            self.update_state = "error"
+            self.update_message = "Não foi possível iniciar a atualização. O app atual foi preservado; tente novamente ou baixe o instalador."
+            self._refresh_update_controls()
+            messagebox.showerror("Atualização não iniciada", self.update_message)
+            return
+        self._close_application()
 
     def _poll_cloud_events(self):
         while True:
@@ -274,6 +624,8 @@ class LiveSalesApp(tk.Tk):
                 self._apply_cloud_data()
             elif kind == "call":
                 value()
+            elif kind == "update":
+                self._apply_update_event(*value)
         if not self.closing:
             self.cloud_poll_job = self.after(150, self._poll_cloud_events)
 
@@ -299,12 +651,16 @@ class LiveSalesApp(tk.Tk):
         }
         self.sync_status_button.configure(
             text=labels.get(status, "Ver sincronização"),
-            fg="#2E6F47" if status == "synced" else COLORS["warning_text"]
-            if status in ("pending", "conflict", "error", "deleted", "not_configured") else COLORS["primary"],
+            fg=self._theme_color("#2E6F47") if status == "synced" else self.colors["warning_text"]
+            if status in ("pending", "conflict", "error", "deleted", "not_configured") else self.colors["primary"],
         )
         if self.sync_dialog_status_label is not None and self.sync_dialog_status_label.winfo_exists():
             self.sync_dialog_status_label.configure(text=detail)
+        check_editor = self.__dict__.get("profile_message_context_check")
+        if check_editor is not None:
+            check_editor()
         self._refresh_cloud_editability()
+        self._refresh_update_controls()
 
     def _refresh_cloud_editability(self):
         editable = bool(self.sync_manager and self.sync_manager.ready
@@ -327,6 +683,11 @@ class LiveSalesApp(tk.Tk):
     def _apply_cloud_data(self):
         if self.sync_manager is None:
             return
+        check_editor = self.__dict__.get("profile_message_context_check")
+        if check_editor is not None:
+            check_editor()
+        if getattr(self.sync_manager, "perfis_disponiveis", False) is True:
+            self.profile_metadata_enabled = True
         # Somente a fila do próprio computador é recuperada automaticamente.
         # Lives vindas de outro computador exigem escolha explícita da usuária.
         if self.initial_pending_recovery:
@@ -340,10 +701,18 @@ class LiveSalesApp(tk.Tk):
             else:
                 self.history_refreshers.pop(window, None)
         self._refresh_cloud_editability()
+        if "profile_switch_var" in self.__dict__:
+            self._refresh_profile_controls()
+        self._refresh_update_controls()
         if self.live_id and self.sync_manager.is_deleted(self.live_id):
             self._apply_sync_status(self.sync_status, self.sync_detail, self.sync_username)
 
     def _apply_saved_state(self, data, history=None):
+        try:
+            self._saved_profile_metadata(data)
+        except ValueError as exc:
+            messagebox.showerror("Live inválida", str(exc))
+            return False
         old_id = self.live_id
         self.applying_cloud = True
         try:
@@ -371,6 +740,7 @@ class LiveSalesApp(tk.Tk):
                     self.sync_manager.begin_edit(self.live_id, history=history)
         finally:
             self.applying_cloud = False
+        return True
 
     def _reset_sheet_widgets(self):
         for child in self.body_frame.winfo_children():
@@ -391,7 +761,7 @@ class LiveSalesApp(tk.Tk):
         window.title(f"Dados no Supabase · v{APP_VERSION}")
         window.geometry("540x590")
         window.minsize(470, 440)
-        window.configure(bg=COLORS["app_bg"])
+        window.configure(bg=self.colors["app_bg"])
         window.transient(self)
 
         def close_window():
@@ -401,24 +771,24 @@ class LiveSalesApp(tk.Tk):
 
         window.protocol("WM_DELETE_WINDOW", close_window)
 
-        top = tk.Frame(window, bg=COLORS["primary"])
+        top = tk.Frame(window, bg=self.colors["primary"])
         top.pack(fill="x")
         tk.Label(
             top,
             text="Lives salvas no Supabase",
-            bg=COLORS["primary"],
+            bg=self.colors["primary"],
             fg="#FFFFFF",
             font=("Segoe UI Semibold", 17),
         ).pack(anchor="w", padx=22, pady=(17, 3))
         tk.Label(
             top,
             text="Integração com o Controle do Brechó",
-            bg=COLORS["primary"],
-            fg=COLORS["app_bg"],
+            bg=self.colors["primary"],
+            fg=self.colors["app_bg"],
             font=("Segoe UI", 10),
         ).pack(anchor="w", padx=22, pady=(0, 17))
 
-        body = tk.Frame(window, bg=COLORS["app_bg"])
+        body = tk.Frame(window, bg=self.colors["app_bg"])
         body.pack(fill="both", expand=True, padx=24, pady=20)
         tk.Label(
             body,
@@ -427,8 +797,8 @@ class LiveSalesApp(tk.Tk):
                 "peças, clientes e suplentes. Se a conexão cair, somente as alterações "
                 "pendentes ficam protegidas neste computador até o banco confirmar."
             ),
-            bg=COLORS["app_bg"],
-            fg=COLORS["text"],
+            bg=self.colors["app_bg"],
+            fg=self.colors["text"],
             justify="left",
             wraplength=450,
             font=("Segoe UI", 10),
@@ -437,8 +807,8 @@ class LiveSalesApp(tk.Tk):
         self.sync_dialog_status_label = tk.Label(
             body,
             text=self.sync_detail,
-            bg=COLORS["secondary"],
-            fg=COLORS["button_text"],
+            bg=self.colors["secondary"],
+            fg=self.colors["button_text"],
             justify="left",
             wraplength=420,
             padx=12,
@@ -454,8 +824,8 @@ class LiveSalesApp(tk.Tk):
                     "Este executável foi criado sem o arquivo de configuração da integração. "
                     "Gere novamente a pasta dist antes de levar o app para a loja."
                 ),
-                bg=COLORS["app_bg"],
-                fg=COLORS["warning_text"],
+                bg=self.colors["app_bg"],
+                fg=self.colors["warning_text"],
                 justify="left",
                 wraplength=450,
                 font=("Segoe UI", 10),
@@ -473,12 +843,12 @@ class LiveSalesApp(tk.Tk):
             tk.Label(
                 body,
                 text=f"Conta conectada: @{account}",
-                bg=COLORS["app_bg"],
-                fg=COLORS["text"],
+                bg=self.colors["app_bg"],
+                fg=self.colors["text"],
                 font=("Segoe UI Semibold", 11),
             ).pack(anchor="w")
 
-            actions = tk.Frame(body, bg=COLORS["app_bg"])
+            actions = tk.Frame(body, bg=self.colors["app_bg"])
             actions.pack(fill="x", pady=(22, 0))
 
             def sync_now():
@@ -534,13 +904,13 @@ class LiveSalesApp(tk.Tk):
                 ).pack(fill="x", pady=(10, 0))
             return
 
-        form = tk.Frame(body, bg=COLORS["app_bg"])
+        form = tk.Frame(body, bg=self.colors["app_bg"])
         form.pack(fill="x")
         tk.Label(
             form,
             text="Usuário",
-            bg=COLORS["app_bg"],
-            fg=COLORS["text"],
+            bg=self.colors["app_bg"],
+            fg=self.colors["text"],
             font=("Segoe UI Semibold", 10),
         ).pack(anchor="w")
         username_entry = tk.Entry(form, font=("Segoe UI", 11), relief="solid", bd=1)
@@ -548,8 +918,8 @@ class LiveSalesApp(tk.Tk):
         tk.Label(
             form,
             text="Senha",
-            bg=COLORS["app_bg"],
-            fg=COLORS["text"],
+            bg=self.colors["app_bg"],
+            fg=self.colors["text"],
             font=("Segoe UI Semibold", 10),
         ).pack(anchor="w")
         password_entry = tk.Entry(form, show="•", font=("Segoe UI", 11), relief="solid", bd=1)
@@ -587,51 +957,82 @@ class LiveSalesApp(tk.Tk):
         username_entry.focus_set()
 
     def _build_ui(self):
-        self.brand_header = tk.Frame(self, bg=COLORS["primary"])
+        self.brand_header = tk.Frame(self, bg=self.colors["primary"])
         self.brand_header.pack(fill="x")
 
-        header_inner = tk.Frame(self.brand_header, bg=COLORS["primary"])
+        header_inner = tk.Frame(self.brand_header, bg=self.colors["primary"])
         header_inner.pack(fill="x", padx=24, pady=18)
 
         self.logo_header_image = self._load_photo("logo_round.png", subsample=4)
-        if self.logo_header_image is not None:
-            logo_label = tk.Label(header_inner, image=self.logo_header_image, bg=COLORS["primary"], bd=0)
-            logo_label.pack(side="left", padx=(0, 14))
+        self.brand_logo_label = tk.Label(header_inner, image=self.logo_header_image or "", bg=self.colors["primary"],
+                                         fg="#FFFFFF", text="" if self.logo_header_image else "IO", bd=0)
+        self.brand_logo_label.pack(side="left", padx=(0, 14))
 
         self.logo_icon_image = self._load_photo("app_icon.png")
         if self.logo_icon_image is not None:
             self.iconphoto(True, self.logo_icon_image)
 
-        title_block = tk.Frame(header_inner, bg=COLORS["primary"])
+        title_block = tk.Frame(header_inner, bg=self.colors["primary"])
         title_block.pack(side="left", fill="x", expand=True)
 
-        title = tk.Label(
+        self.brand_title_label = tk.Label(
             title_block,
             text="IoMarques Brechó",
-            bg=COLORS["primary"],
+            bg=self.colors["primary"],
             fg="#FFFFFF",
             font=("Segoe UI Semibold", 24),
         )
-        title.pack(anchor="w")
+        self.brand_title_label.pack(anchor="w")
 
         subtitle = tk.Label(
             title_block,
             text="controle de vendas da live no Instagram",
-            bg=COLORS["primary"],
-            fg=COLORS["app_bg"],
+            bg=self.colors["primary"],
+            fg=self.colors["app_bg"],
             font=("Segoe UI", 11),
         )
         subtitle.pack(anchor="w", pady=(3, 0))
 
-        self.toolbar = tk.Frame(self, bg=COLORS["app_bg"])
+        self.profile_panel = tk.Frame(self, bg=self.colors["secondary"])
+        self.profile_panel.pack(fill="x", padx=24, pady=(12, 0))
+        tk.Label(self.profile_panel, text="Perfil desta live", bg=self.colors["secondary"], fg=self.colors["button_text"],
+                 font=("Segoe UI Semibold", 10)).pack(side="left", padx=(12, 18), pady=10)
+        tk.Label(self.profile_panel, text="Io Marques", bg=self.colors["secondary"], fg=self.colors["text"],
+                 font=("Segoe UI", 10)).pack(side="left")
+        self.profile_switch_var = tk.BooleanVar(master=self, value=False)
+        self.profile_switch_canvas = tk.Canvas(self.profile_panel, width=56, height=34,
+                                               bg=self.colors["secondary"], highlightthickness=2,
+                                               highlightbackground=self.colors["secondary"], takefocus=True)
+        self.profile_switch_canvas.pack(side="left", padx=8)
+        self.profile_switch_canvas.bind("<Button-1>", self._toggle_live_profile)
+        self.profile_switch_canvas.bind("<space>", self._toggle_live_profile)
+        self.profile_switch_canvas.bind("<Return>", self._toggle_live_profile)
+        tk.Label(self.profile_panel, text="Marques Brechó", bg=self.colors["secondary"], fg=self.colors["text"],
+                 font=("Segoe UI Semibold", 10)).pack(side="left")
+        self.profile_status_label = tk.Label(self.profile_panel, text="", bg=self.colors["secondary"],
+                                             fg=self.colors["text"], font=("Segoe UI", 9))
+        self.profile_status_label.pack(side="left", padx=(18, 8))
+        self.profile_message_button = ttk.Button(self.profile_panel, text="Mensagem do masculino",
+                                                  command=self.show_profile_message_editor, style="Secondary.TButton")
+
+        self.update_bar = tk.Frame(self, bg=self.colors["secondary"])
+        self.update_label = tk.Label(self.update_bar, text="", bg=self.colors["secondary"],
+                                     fg=self.colors["text"], font=("Segoe UI", 10), anchor="w",
+                                     wraplength=620, justify="left")
+        self.update_label.pack(side="left", fill="x", expand=True, padx=12, pady=9)
+        self.update_button = ttk.Button(self.update_bar, text="Atualizar e reiniciar",
+                                        command=self._update_action, style="Secondary.TButton")
+        self.update_button.pack(side="right", padx=12, pady=6)
+
+        self.toolbar = tk.Frame(self, bg=self.colors["app_bg"])
         self.toolbar.pack(fill="x", padx=24, pady=(18, 14))
 
-        self.toolbar_actions = tk.Frame(self.toolbar, bg=COLORS["app_bg"])
+        self.toolbar_actions = tk.Frame(self.toolbar, bg=self.colors["app_bg"])
         self.toolbar_actions.pack(side="left", fill="x", expand=True)
 
-        self.pre_live_frame = tk.Frame(self.toolbar_actions, bg=COLORS["app_bg"])
-        self.live_frame = tk.Frame(self.toolbar_actions, bg=COLORS["app_bg"])
-        self.post_live_frame = tk.Frame(self.toolbar_actions, bg=COLORS["app_bg"])
+        self.pre_live_frame = tk.Frame(self.toolbar_actions, bg=self.colors["app_bg"])
+        self.live_frame = tk.Frame(self.toolbar_actions, bg=self.colors["app_bg"])
+        self.post_live_frame = tk.Frame(self.toolbar_actions, bg=self.colors["app_bg"])
 
         self.start_button = ttk.Button(
             self.pre_live_frame, text="Iniciar live", command=self.start_live, style="Primary.TButton"
@@ -646,14 +1047,14 @@ class LiveSalesApp(tk.Tk):
 
         self._build_final_action_buttons(self.post_live_frame)
 
-        timer_panel = tk.Frame(self.toolbar, bg=COLORS["app_bg"])
+        timer_panel = tk.Frame(self.toolbar, bg=self.colors["app_bg"])
         timer_panel.pack(side="right")
 
         self.live_status_label = tk.Label(
             timer_panel,
             text="Aguardando início",
-            bg=COLORS["app_bg"],
-            fg=COLORS["button_text"],
+            bg=self.colors["app_bg"],
+            fg=self.colors["button_text"],
             font=("Segoe UI Semibold", 10),
         )
         self.live_status_label.pack(side="top", anchor="e")
@@ -661,8 +1062,8 @@ class LiveSalesApp(tk.Tk):
         self.timer_label = tk.Label(
             timer_panel,
             text="00:00:00",
-            bg=COLORS["timer_bg"],
-            fg=COLORS["text"],
+            bg=self.colors["timer_bg"],
+            fg=self.colors["text"],
             font=("Consolas", 18, "bold"),
             padx=14,
             pady=3,
@@ -672,8 +1073,8 @@ class LiveSalesApp(tk.Tk):
         self.total_sold_label = tk.Label(
             timer_panel,
             text="Vendido: R$ 0,00",
-            bg=COLORS["app_bg"],
-            fg=COLORS["button_text"],
+            bg=self.colors["app_bg"],
+            fg=self.colors["button_text"],
             font=("Segoe UI Semibold", 10),
         )
         self.total_sold_label.pack(side="top", anchor="e", pady=(4, 0))
@@ -682,10 +1083,10 @@ class LiveSalesApp(tk.Tk):
             timer_panel,
             text="Conectar recortes",
             command=self.open_sync_dialog,
-            bg=COLORS["app_bg"],
-            fg=COLORS["button_text"],
-            activebackground=COLORS["secondary"],
-            activeforeground=COLORS["button_text"],
+            bg=self.colors["app_bg"],
+            fg=self.colors["button_text"],
+            activebackground=self.colors["secondary"],
+            activeforeground=self.colors["button_text"],
             relief="flat",
             bd=0,
             padx=0,
@@ -695,13 +1096,13 @@ class LiveSalesApp(tk.Tk):
         )
         self.sync_status_button.pack(side="top", anchor="e", pady=(2, 0))
 
-        self.search_panel = tk.Frame(self, bg=COLORS["app_bg"])
+        self.search_panel = tk.Frame(self, bg=self.colors["app_bg"])
 
         tk.Label(
             self.search_panel,
             text="Pesquisar",
-            bg=COLORS["app_bg"],
-            fg=COLORS["button_text"],
+            bg=self.colors["app_bg"],
+            fg=self.colors["button_text"],
             font=("Segoe UI Semibold", 10),
         ).pack(side="left", padx=(0, 8))
 
@@ -711,7 +1112,7 @@ class LiveSalesApp(tk.Tk):
             width=28,
             relief="solid",
             bd=1,
-            fg=COLORS["text"],
+            fg=self.colors["text"],
             font=("Segoe UI", 10),
         )
         self.search_entry.pack(side="left", padx=(0, 8), ipady=4)
@@ -730,48 +1131,48 @@ class LiveSalesApp(tk.Tk):
 
         self.duplicate_code_alert = tk.Frame(
             self,
-            bg=COLORS["warning_bg"],
-            highlightbackground="#E2B56F",
+            bg=self.colors["warning_bg"],
+            highlightbackground=self._theme_color("#E2B56F"),
             highlightthickness=1,
         )
         tk.Label(
             self.duplicate_code_alert,
             text="!",
-            bg=COLORS["warning_bg"],
-            fg=COLORS["warning_text"],
+            bg=self.colors["warning_bg"],
+            fg=self.colors["warning_text"],
             font=("Segoe UI Semibold", 12),
             width=2,
         ).pack(side="left", padx=(10, 4), pady=7)
         self.duplicate_code_alert_label = tk.Label(
             self.duplicate_code_alert,
             text="",
-            bg=COLORS["warning_bg"],
-            fg=COLORS["warning_text"],
+            bg=self.colors["warning_bg"],
+            fg=self.colors["warning_text"],
             font=("Segoe UI Semibold", 10),
             anchor="w",
             justify="left",
         )
         self.duplicate_code_alert_label.pack(side="left", fill="x", expand=True, padx=(0, 10), pady=7)
 
-        self.table_shell = tk.Frame(self, bg=COLORS["grid"], bd=1)
+        self.table_shell = tk.Frame(self, bg=self.colors["grid"], bd=1)
         self.table_shell.pack(fill="both", expand=True, padx=24, pady=(0, 14))
 
-        header_shell = tk.Frame(self.table_shell, bg=COLORS["grid"])
+        header_shell = tk.Frame(self.table_shell, bg=self.colors["grid"])
         header_shell.pack(fill="x")
 
-        self.header_frame = tk.Frame(header_shell, bg=COLORS["grid"])
+        self.header_frame = tk.Frame(header_shell, bg=self.colors["grid"])
         self.header_frame.pack(side="left", fill="x", expand=True)
-        self.header_spacer = tk.Frame(header_shell, bg=COLORS["grid"], width=17)
+        self.header_spacer = tk.Frame(header_shell, bg=self.colors["grid"], width=17)
         self.header_spacer.pack(side="right", fill="y")
         self.header_spacer.pack_propagate(False)
         self._build_table_header()
 
-        body_shell = tk.Frame(self.table_shell, bg=COLORS["grid"])
+        body_shell = tk.Frame(self.table_shell, bg=self.colors["grid"])
         body_shell.pack(fill="both", expand=True)
 
         self.canvas = tk.Canvas(
             body_shell,
-            bg=COLORS["table_bg"],
+            bg=self.colors["table_bg"],
             highlightthickness=0,
             borderwidth=0,
         )
@@ -782,14 +1183,14 @@ class LiveSalesApp(tk.Tk):
         self.header_spacer.configure(width=scroll.winfo_reqwidth())
         self.canvas.configure(yscrollcommand=scroll.set)
 
-        self.body_frame = tk.Frame(self.canvas, bg=COLORS["grid"])
+        self.body_frame = tk.Frame(self.canvas, bg=self.colors["grid"])
         self.body_window = self.canvas.create_window((0, 0), window=self.body_frame, anchor="nw")
 
         self.body_frame.bind("<Configure>", self._on_body_configure)
         self.canvas.bind("<Configure>", self._on_canvas_configure)
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
 
-        footer = tk.Frame(self, bg=COLORS["app_bg"])
+        footer = tk.Frame(self, bg=self.colors["app_bg"])
         footer.pack(fill="x", padx=24, pady=(0, 14))
 
         footer_hint = tk.Label(
@@ -798,8 +1199,8 @@ class LiveSalesApp(tk.Tk):
                 "Clique em Iniciar live para gravar os tempos. "
                 "Ao preencher Valor ou Código, o Tempo da peça é salvo automaticamente."
             ),
-            bg=COLORS["app_bg"],
-            fg=COLORS["button_text"],
+            bg=self.colors["app_bg"],
+            fg=self.colors["button_text"],
             font=("Segoe UI", 10),
             anchor="w",
         )
@@ -808,10 +1209,11 @@ class LiveSalesApp(tk.Tk):
         tk.Label(
             footer,
             text="Created By Dudu",
-            bg=COLORS["app_bg"],
-            fg=COLORS["button_text"],
+            bg=self.colors["app_bg"],
+            fg=self.colors["button_text"],
             font=("Segoe UI", 9, "italic"),
         ).pack(side="right", padx=(12, 0))
+        self._apply_profile_theme()
 
     def _build_final_action_buttons(self, parent):
         self._build_actions_menu(parent).pack(side="left", padx=(0, 8))
@@ -827,13 +1229,13 @@ class LiveSalesApp(tk.Tk):
         )
 
     def _build_actions_menu(self, parent):
-        container = tk.Frame(parent, bg=COLORS["app_bg"])
+        container = tk.Frame(parent, bg=self.colors["app_bg"])
         button = tk.Menubutton(
             container,
             text="Ações da live ▾",
-            bg=COLORS["primary"],
+            bg=self.colors["primary"],
             fg="#FFFFFF",
-            activebackground="#6C366B",
+            activebackground=self._theme_color("#6C366B"),
             activeforeground="#FFFFFF",
             relief="flat",
             bd=0,
@@ -848,9 +1250,9 @@ class LiveSalesApp(tk.Tk):
             button,
             tearoff=False,
             bg="#FFFFFF",
-            fg=COLORS["text"],
-            activebackground=COLORS["secondary"],
-            activeforeground=COLORS["button_text"],
+            fg=self.colors["text"],
+            activebackground=self.colors["secondary"],
+            activeforeground=self.colors["button_text"],
             font=("Segoe UI", 10),
             bd=0,
             relief="flat",
@@ -867,18 +1269,20 @@ class LiveSalesApp(tk.Tk):
         menu.add_separator()
         menu.add_command(label="Histórico de lives", command=self.show_history)
         menu.add_command(label="Retomar live / rascunho", command=self.show_cloud_lives)
+        menu.add_separator()
+        menu.add_command(label="Verificar atualizações", command=self._check_updates)
         button.configure(menu=menu)
         return container
 
     def _build_prints_menu(self, parent):
-        container = tk.Frame(parent, bg=COLORS["app_bg"])
+        container = tk.Frame(parent, bg=self.colors["app_bg"])
         button = tk.Menubutton(
             container,
             text="Impressões ▾",
-            bg=COLORS["secondary"],
-            fg=COLORS["button_text"],
-            activebackground="#E3C6E3",
-            activeforeground=COLORS["button_text"],
+            bg=self.colors["secondary"],
+            fg=self.colors["button_text"],
+            activebackground=self._theme_color("#E3C6E3"),
+            activeforeground=self.colors["button_text"],
             relief="flat",
             bd=0,
             padx=14,
@@ -892,9 +1296,9 @@ class LiveSalesApp(tk.Tk):
             button,
             tearoff=False,
             bg="#FFFFFF",
-            fg=COLORS["text"],
-            activebackground=COLORS["secondary"],
-            activeforeground=COLORS["button_text"],
+            fg=self.colors["text"],
+            activebackground=self.colors["secondary"],
+            activeforeground=self.colors["button_text"],
             font=("Segoe UI", 10),
             bd=0,
             relief="flat",
@@ -909,6 +1313,7 @@ class LiveSalesApp(tk.Tk):
 
     def show_memory_game(self):
         window = tk.Toplevel(self)
+        window._profile_theme_exempt = True
         window.title("Jogo da memória - IoMarques Brechó")
         window.geometry("520x620")
         window.minsize(460, 560)
@@ -1128,6 +1533,7 @@ class LiveSalesApp(tk.Tk):
 
     def show_story_adventure(self):
         window = tk.Toplevel(self)
+        window._profile_theme_exempt = True
         window.title("Aventura da Peça 777 - IoMarques Brechó")
         window.geometry("900x700")
         window.minsize(820, 640)
@@ -1650,8 +2056,8 @@ class LiveSalesApp(tk.Tk):
         self.filter_buttons = []
         index_cell = tk.Frame(
             self.header_frame,
-            bg=COLORS["table_header"],
-            highlightbackground=COLORS["grid"],
+            bg=self.colors["table_header"],
+            highlightbackground=self.colors["grid"],
             highlightthickness=1,
         )
         index_cell.grid(row=0, column=0, sticky="nsew")
@@ -1659,8 +2065,8 @@ class LiveSalesApp(tk.Tk):
         tk.Label(
             index_cell,
             text="Peça",
-            bg=COLORS["table_header"],
-            fg=COLORS["table_header_text"],
+            bg=self.colors["table_header"],
+            fg=self.colors["table_header_text"],
             font=("Segoe UI Semibold", 10),
             anchor="center",
             padx=6,
@@ -1670,8 +2076,8 @@ class LiveSalesApp(tk.Tk):
         for col, header in enumerate(HEADERS[column] for column in COLUMNS):
             cell = tk.Frame(
                 self.header_frame,
-                bg=COLORS["table_header"],
-                highlightbackground=COLORS["grid"],
+                bg=self.colors["table_header"],
+                highlightbackground=self.colors["grid"],
                 highlightthickness=1,
             )
             cell.grid(row=0, column=col + 1, sticky="nsew")
@@ -1680,8 +2086,8 @@ class LiveSalesApp(tk.Tk):
             label = tk.Label(
                 cell,
                 text=header,
-                bg=COLORS["table_header"],
-                fg=COLORS["table_header_text"],
+                bg=self.colors["table_header"],
+                fg=self.colors["table_header_text"],
                 font=("Segoe UI Semibold", 11),
                 anchor="w",
                 padx=10,
@@ -1693,10 +2099,10 @@ class LiveSalesApp(tk.Tk):
                 cell,
                 text="▼",
                 command=lambda c=col: self._show_filter_popup(c),
-                bg=COLORS["table_header"],
-                fg=COLORS["button_text"],
-                activebackground=COLORS["secondary"],
-                activeforeground=COLORS["button_text"],
+                bg=self.colors["table_header"],
+                fg=self.colors["button_text"],
+                activebackground=self.colors["secondary"],
+                activeforeground=self.colors["button_text"],
                 relief="flat",
                 bd=0,
                 width=2,
@@ -1852,15 +2258,15 @@ class LiveSalesApp(tk.Tk):
     def _show_filter_popup(self, col):
         popup = tk.Toplevel(self)
         popup.title(f"Filtro - {HEADERS[COLUMNS[col]]}")
-        popup.configure(bg=COLORS["app_bg"])
+        popup.configure(bg=self.colors["app_bg"])
         popup.resizable(False, False)
         popup.transient(self)
 
         tk.Label(
             popup,
             text=f"Filtrar {HEADERS[COLUMNS[col]]}",
-            bg=COLORS["app_bg"],
-            fg=COLORS["button_text"],
+            bg=self.colors["app_bg"],
+            fg=self.colors["button_text"],
             font=("Segoe UI Semibold", 10),
         ).pack(anchor="w", padx=12, pady=(10, 4))
 
@@ -1870,12 +2276,12 @@ class LiveSalesApp(tk.Tk):
             width=28,
             relief="solid",
             bd=1,
-            fg=COLORS["text"],
+            fg=self.colors["text"],
             font=("Segoe UI", 10),
         )
         entry.pack(fill="x", padx=12, pady=(0, 10), ipady=4)
 
-        actions = tk.Frame(popup, bg=COLORS["app_bg"])
+        actions = tk.Frame(popup, bg=self.colors["app_bg"])
         actions.pack(fill="x", padx=12, pady=(0, 12))
 
         def apply_and_close():
@@ -1946,8 +2352,8 @@ class LiveSalesApp(tk.Tk):
         for col, button in enumerate(self.filter_buttons):
             active = bool(self.filter_vars[col].get().strip())
             button.configure(
-                bg=COLORS["secondary"] if active else COLORS["table_header"],
-                fg=COLORS["primary"] if active else COLORS["button_text"],
+                bg=self.colors["secondary"] if active else self.colors["table_header"],
+                fg=self.colors["primary"] if active else self.colors["button_text"],
             )
 
     def _find_next_match(self):
@@ -1995,8 +2401,8 @@ class LiveSalesApp(tk.Tk):
         self.body_frame.grid_columnconfigure(0, weight=0, minsize=INDEX_COLUMN_WIDTH)
         index_cell = tk.Frame(
             self.body_frame,
-            bg=COLORS["table_header"],
-            highlightbackground=COLORS["grid"],
+            bg=self.colors["table_header"],
+            highlightbackground=self.colors["grid"],
             highlightthickness=1,
         )
         index_cell.grid(row=row_index, column=0, sticky="nsew")
@@ -2006,9 +2412,9 @@ class LiveSalesApp(tk.Tk):
             index_cell,
             variable=time_check_var,
             command=lambda r=row_index: self._toggle_manual_time(r),
-            bg=COLORS["table_header"],
-            activebackground=COLORS["table_header"],
-            selectcolor="#DDF4E5",
+            bg=self.colors["table_header"],
+            activebackground=self.colors["table_header"],
+            selectcolor=self._theme_color("#DDF4E5"),
             relief="flat",
             bd=0,
             padx=0,
@@ -2021,8 +2427,8 @@ class LiveSalesApp(tk.Tk):
         index_label = tk.Label(
             index_cell,
             text=str(row_index + 1),
-            bg=COLORS["table_header"],
-            fg=COLORS["button_text"],
+            bg=self.colors["table_header"],
+            fg=self.colors["button_text"],
             font=("Segoe UI Semibold", 10),
             anchor="center",
             padx=2,
@@ -2035,8 +2441,8 @@ class LiveSalesApp(tk.Tk):
 
             cell = tk.Frame(
                 self.body_frame,
-                bg=COLORS["table_bg"],
-                highlightbackground=COLORS["grid"],
+                bg=self.colors["table_bg"],
+                highlightbackground=self.colors["grid"],
                 highlightthickness=1,
             )
             cell.grid(row=row_index, column=col + 1, sticky="nsew")
@@ -2049,9 +2455,9 @@ class LiveSalesApp(tk.Tk):
                 width=1,
                 relief="flat",
                 bd=0,
-                bg=COLORS["table_bg"],
-                fg=COLORS["text"],
-                insertbackground=COLORS["text"],
+                bg=self.colors["table_bg"],
+                fg=self.colors["text"],
+                insertbackground=self.colors["text"],
                 font=("Segoe UI", 11),
             )
             entry.pack(side="left", fill="both", expand=True, padx=(10, 4), pady=7)
@@ -2062,10 +2468,10 @@ class LiveSalesApp(tk.Tk):
                     cell,
                     text="X",
                     command=lambda r=row_index, c=col: self._clear_client_cell(r, c),
-                    bg=COLORS["table_bg"],
-                    fg=COLORS["button_text"],
-                    activebackground=COLORS["secondary"],
-                    activeforeground=COLORS["button_text"],
+                    bg=self.colors["table_bg"],
+                    fg=self.colors["button_text"],
+                    activebackground=self.colors["secondary"],
+                    activeforeground=self.colors["button_text"],
                     relief="flat",
                     bd=0,
                     padx=7,
@@ -2122,7 +2528,7 @@ class LiveSalesApp(tk.Tk):
     def _refresh_cell_border(self, row, col):
         if not self._cell_exists(row, col):
             return
-        color = COLORS["active_border"] if self.active_cell == (row, col) else COLORS["grid"]
+        color = self.colors["active_border"] if self.active_cell == (row, col) else self.colors["grid"]
         self.cell_frames[row][col].configure(highlightbackground=color)
 
     def _finish_cell_edit(self, row, col):
@@ -2317,20 +2723,20 @@ class LiveSalesApp(tk.Tk):
 
         bg = self._row_bg(row)
         if row < len(self.index_frames):
-            self.index_frames[row].configure(bg=COLORS["table_header"])
+            self.index_frames[row].configure(bg=self.colors["table_header"])
         if row < len(self.index_labels):
-            self.index_labels[row].configure(bg=COLORS["table_header"])
+            self.index_labels[row].configure(bg=self.colors["table_header"])
         if row < len(self.time_check_buttons):
             self.time_check_buttons[row].configure(
-                bg=COLORS["table_header"],
-                activebackground=COLORS["table_header"],
+                bg=self.colors["table_header"],
+                activebackground=self.colors["table_header"],
             )
         for col in range(len(COLUMNS)):
             cell = self.cell_frames[row][col]
             entry = self.cell_entries[row][col]
-            cell_bg = COLORS["duplicate_cell"] if col == CODE_COL and self._is_duplicate_code_row(row) else bg
+            cell_bg = self.colors["duplicate_cell"] if col == CODE_COL and self._is_duplicate_code_row(row) else bg
             cell.configure(bg=cell_bg)
-            entry.configure(bg=cell_bg, fg=COLORS["text"])
+            entry.configure(bg=cell_bg, fg=self.colors["text"])
             button = self.clear_buttons[row][col]
             if button is not None:
                 button.configure(bg=bg)
@@ -2339,8 +2745,8 @@ class LiveSalesApp(tk.Tk):
 
     def _row_bg(self, row):
         if row < 0 or row >= len(self.row_vars):
-            return COLORS["table_bg"]
-        return COLORS["sold_row"] if self.row_vars[row][CLIENT_COL].get().strip() else COLORS["table_bg"]
+            return self.colors["table_bg"]
+        return self.colors["sold_row"] if self.row_vars[row][CLIENT_COL].get().strip() else self.colors["table_bg"]
 
     def _duplicate_code_groups(self):
         grouped = defaultdict(list)
@@ -2399,7 +2805,7 @@ class LiveSalesApp(tk.Tk):
     def _refresh_duplicate_code_cell(self, row):
         if not self._cell_exists(row, CODE_COL):
             return
-        bg = COLORS["duplicate_cell"] if self._is_duplicate_code_row(row) else self._row_bg(row)
+        bg = self.colors["duplicate_cell"] if self._is_duplicate_code_row(row) else self._row_bg(row)
         self.cell_frames[row][CODE_COL].configure(bg=bg)
         self.cell_entries[row][CODE_COL].configure(bg=bg)
 
@@ -2442,6 +2848,64 @@ class LiveSalesApp(tk.Tk):
                           and isinstance(value.get("live"), dict), {})
         return history if isinstance(history, list) else history["lives"], state
 
+    def _current_profile(self):
+        return normalize_profile(self.__dict__.get("live_profile", IO_MARQUES))
+
+    def _saved_profile_metadata(self, data):
+        live = data.get("live", {}) if isinstance(data, dict) else {}
+        if not isinstance(live, dict):
+            raise ValueError("Os dados do perfil desta live são inválidos.")
+        perfil = normalize_profile(live.get("perfil"))
+        if "perfil" in live or "mensagem_cliente" in live:
+            if (not isinstance(live.get("perfil"), str) or "mensagem_cliente" not in live):
+                raise ValueError("O perfil e a mensagem desta live devem estar juntos.")
+            template = validate_message_template(live["mensagem_cliente"])
+        else:
+            template = IO_MESSAGE_TEMPLATE
+        return perfil, template
+
+    def _profile_metadata(self):
+        if not self.__dict__.get("profile_metadata_enabled", False):
+            return {}
+        perfil = self._current_profile()
+        template = self.__dict__.get("live_message_template", DEFAULT_MESSAGES[perfil])
+        validate_message_template(template)
+        return {"perfil": perfil, "mensagem_cliente": template}
+
+    def _set_live_profile(self, perfil):
+        perfil = normalize_profile(perfil)
+        if (self.live_running or self.live_first_started_at is not None
+                or self.live_finished_at is not None):
+            self._refresh_profile_controls()
+            return False
+        if perfil == self._current_profile():
+            return True
+        settings = self.sync_manager.perfis_live() if (
+            self.sync_manager and getattr(self.sync_manager, "perfis_disponiveis", False) is True
+        ) else {}
+        if perfil == MARQUES_BRECHO and perfil not in settings:
+            messagebox.showinfo(
+                "Modelo do Marques Brechó indisponível",
+                "Conecte ao Supabase e aguarde o carregamento dos modelos antes de escolher "
+                "o Marques Brechó. Se a estrutura ainda não foi preparada, execute a atualização de perfis.",
+            )
+            self._refresh_profile_controls()
+            return False
+        template = settings[perfil]["mensagem_cliente"] if perfil == MARQUES_BRECHO else IO_MESSAGE_TEMPLATE
+        validate_message_template(template)
+        previous = (self.live_profile, self.live_message_template, self.profile_metadata_enabled)
+        self.live_profile = perfil
+        self.live_message_template = template
+        self.profile_metadata_enabled = bool(settings) or self.profile_metadata_enabled
+        if not self._save_rows():
+            self.live_profile, self.live_message_template, self.profile_metadata_enabled = previous
+            self._refresh_profile_controls()
+            return False
+        self._apply_profile_theme()
+        self._refresh_profile_controls()
+        self._refresh_update_controls()
+        return True
+
     def _sheet_data(self):
         return {
             "live": {
@@ -2455,6 +2919,7 @@ class LiveSalesApp(tk.Tk):
                 "started_at": self.live_started_at.isoformat(timespec="seconds") if self.live_started_at else None,
                 "finished_at": self.live_finished_at.isoformat(timespec="seconds") if self.live_finished_at else None,
                 "elapsed_seconds": self.live_elapsed_seconds,
+                **self._profile_metadata(),
             },
             "rows": self._rows(),
         }
@@ -2499,6 +2964,10 @@ class LiveSalesApp(tk.Tk):
 
     def _restore_live_state(self, data):
         live = data.get("live", {}) if isinstance(data, dict) else {}
+        perfil, template = self._saved_profile_metadata(data)
+        self.live_profile = perfil
+        self.live_message_template = template
+        self.profile_metadata_enabled = self.__dict__.get("profile_metadata_enabled", False) or "perfil" in live
         self.live_id = live.get("id") or None
         try:
             self.live_elapsed_seconds = max(0, int(live.get("elapsed_seconds", 0) or 0))
@@ -2533,6 +3002,8 @@ class LiveSalesApp(tk.Tk):
 
         if self.live_running and self.live_started_at is None:
             self.live_running = False
+        if "brand_header" in self.__dict__:
+            self._apply_profile_theme()
 
     def _load_saved_rows(self, data):
         rows = data.get("rows", []) if isinstance(data, dict) else []
@@ -2650,6 +3121,7 @@ class LiveSalesApp(tk.Tk):
             "clients": stats["clients"],
             "total": self._format_money(stats["total"]),
             "rows": self._rows(),
+            **self._profile_metadata(),
         }
 
     def _upsert_current_live_history(self, finished_at=None):
@@ -2685,11 +3157,13 @@ class LiveSalesApp(tk.Tk):
         window = tk.Toplevel(self)
         window.title("Retomar live / rascunho")
         window.geometry("660x340")
-        window.configure(bg=COLORS["app_bg"])
+        window.configure(bg=self.colors["app_bg"])
         tk.Label(window, text="Escolha a live que deseja continuar neste computador.",
-                 bg=COLORS["app_bg"], fg=COLORS["text"], font=("Segoe UI", 11)).pack(padx=18, pady=15)
-        tree = ttk.Treeview(window, columns=("date", "status", "pieces"), show="headings", selectmode="browse")
+                 bg=self.colors["app_bg"], fg=self.colors["text"], font=("Segoe UI", 11)).pack(padx=18, pady=15)
+        tree = ttk.Treeview(window, columns=("date", "profile", "status", "pieces"), show="headings", selectmode="browse")
         tree.heading("date", text="Início")
+        tree.heading("profile", text="Perfil")
+        tree.column("profile", width=140)
         tree.heading("status", text="Situação")
         tree.heading("pieces", text="Linhas")
         tree.pack(fill="both", expand=True, padx=18)
@@ -2697,6 +3171,7 @@ class LiveSalesApp(tk.Tk):
             live = data.get("live", {})
             tree.insert("", "end", iid=str(index), values=(
                 self._format_history_datetime(live.get("first_started_at")) or "Rascunho não iniciado",
+                PROFILE_NAMES[normalize_profile(live.get("perfil"))],
                 "Em andamento" if live.get("running") else "Rascunho",
                 len(data.get("rows", [])),
             ))
@@ -2724,8 +3199,8 @@ class LiveSalesApp(tk.Tk):
             if current is None:
                 messagebox.showinfo("Live atualizada", "Essa live foi finalizada ou removida. Atualize a lista.", parent=window)
                 return
-            self._apply_saved_state(current)
-            window.destroy()
+            if self._apply_saved_state(current):
+                window.destroy()
 
         ttk.Button(window, text="Retomar selecionada", command=resume, style="Primary.TButton").pack(pady=15)
         if self.sync_manager.is_admin:
@@ -2759,10 +3234,10 @@ class LiveSalesApp(tk.Tk):
         window = tk.Toplevel(self)
         window.title("Revisar conflitos")
         window.geometry("700x400")
-        window.configure(bg=COLORS["app_bg"])
+        window.configure(bg=self.colors["app_bg"])
         tk.Label(window, text="As alterações deste computador estão protegidas e não sobrescreveram o banco. "
                  "Se precisar conservar essa versão, abra a planilha ou o histórico e exporte para Excel antes de descartar.",
-                 bg=COLORS["app_bg"], fg=COLORS["warning_text"], wraplength=650,
+                 bg=self.colors["app_bg"], fg=self.colors["warning_text"], wraplength=650,
                  font=("Segoe UI Semibold", 11)).pack(padx=18, pady=16)
         tree = ttk.Treeview(window, columns=("id", "reason"), show="headings", selectmode="browse")
         tree.heading("id", text="Live")
@@ -2810,22 +3285,27 @@ class LiveSalesApp(tk.Tk):
         if self.sync_manager:
             self.sync_manager.sync_now()
         window = tk.Toplevel(self)
-        window.title("Histórico de lives - IoMarques Brechó")
+        window.title("Histórico de lives · Io Marques / Marques Brechó")
         window.geometry("1000x520")
         window.minsize(780, 360)
-        window.configure(bg=COLORS["app_bg"])
+        window.configure(bg=self.colors["app_bg"])
 
-        top = tk.Frame(window, bg=COLORS["primary"])
+        top = tk.Frame(window, bg=self.colors["primary"])
         top.pack(fill="x")
         tk.Label(
             top,
             text="Histórico de lives",
-            bg=COLORS["primary"],
+            bg=self.colors["primary"],
             fg="#FFFFFF",
             font=("Segoe UI Semibold", 17),
         ).pack(side="left", padx=18, pady=12)
 
-        columns = ("duration", "pieces_count", "sold_count", "clients_count", "total", "commission")
+        profile_filter = tk.StringVar(value="Todos os perfis")
+        selector = ttk.Combobox(top, textvariable=profile_filter, state="readonly", width=20,
+                                values=("Todos os perfis", *PROFILE_NAMES.values()))
+        selector.pack(side="right", padx=18, pady=12)
+
+        columns = ("duration", "pieces_count", "sold_count", "clients_count", "total", "commission", "profile")
         headings = {
             "duration": "Duração",
             "pieces_count": "Peças",
@@ -2833,8 +3313,9 @@ class LiveSalesApp(tk.Tk):
             "clients_count": "Clientes",
             "total": "Total vendido",
             "commission": "10%",
+            "profile": "Perfil",
         }
-        table = tk.Frame(window, bg=COLORS["app_bg"])
+        table = tk.Frame(window, bg=self.colors["app_bg"])
         table.pack(fill="both", expand=True, padx=18, pady=18)
         table.rowconfigure(0, weight=1)
         table.columnconfigure(0, weight=1)
@@ -2849,8 +3330,8 @@ class LiveSalesApp(tk.Tk):
         tree.column("#0", width=275, minwidth=250, anchor="w")
         tree.tag_configure(
             "month",
-            background=COLORS["secondary"],
-            foreground=COLORS["text"],
+            background=self.colors["secondary"],
+            foreground=self.colors["text"],
             font=("Segoe UI", 10, "bold"),
         )
 
@@ -2860,15 +3341,16 @@ class LiveSalesApp(tk.Tk):
         tree.column("duration", width=105, minwidth=85)
         tree.column("total", width=150, minwidth=130, anchor="e")
         tree.column("commission", width=140, minwidth=120, anchor="e")
+        tree.column("profile", width=150, minwidth=140, anchor="w")
 
-        actions = tk.Frame(window, bg=COLORS["app_bg"])
+        actions = tk.Frame(window, bg=self.colors["app_bg"])
         actions.pack(fill="x", padx=18, pady=(0, 18))
 
         empty = tk.Label(
             table,
             text="Nenhuma live finalizada ainda.",
-            bg=COLORS["app_bg"],
-            fg=COLORS["text"],
+            bg=self.colors["app_bg"],
+            fg=self.colors["text"],
             font=("Segoe UI", 11),
         )
 
@@ -2891,7 +3373,7 @@ class LiveSalesApp(tk.Tk):
                 delete_button.pack_forget()
 
         def refresh_empty_state():
-            empty.configure(text="Nenhuma live finalizada ainda." if self.sync_manager and self.sync_manager.cloud_loaded
+            empty.configure(text="Nenhuma live finalizada neste perfil." if self.sync_manager and self.sync_manager.cloud_loaded
                             else "Conecte ao Supabase e aguarde o carregamento do histórico.")
             if lives:
                 empty.place_forget()
@@ -2904,6 +3386,8 @@ class LiveSalesApp(tk.Tk):
             selected = selected_live()
             selected_id = selected.get("id") if selected else None
             lives = self._read_history()
+            if profile_filter.get() != "Todos os perfis":
+                lives = [live for live in lives if PROFILE_NAMES[normalize_profile(live.get("perfil"))] == profile_filter.get()]
             expanded = {item: tree.item(item, "open") for item in tree.get_children()}
             if expanded:
                 tree.delete(*expanded)
@@ -2923,6 +3407,7 @@ class LiveSalesApp(tk.Tk):
                         "", "", "", "",
                         self._format_money(group["total"]),
                         self._format_money(group["commission"]),
+                        "",
                     ),
                 )
                 for index, live in enumerate(group["lives"]):
@@ -2940,6 +3425,7 @@ class LiveSalesApp(tk.Tk):
                             live.get("clients_count", 0),
                             live.get("total", "R$ 0,00"),
                             self._history_commission_value(live),
+                            PROFILE_NAMES[normalize_profile(live.get("perfil"))],
                         ),
                     )
                     if live.get("id") == selected_id:
@@ -3040,6 +3526,7 @@ class LiveSalesApp(tk.Tk):
         tree.bind("<Delete>", lambda _event: delete_selected_history() if selected_live() is not None else None)
 
         self.history_refreshers[window] = populate_history
+        selector.bind("<<ComboboxSelected>>", lambda _event: populate_history())
         window.bind("<Destroy>", lambda event: self.history_refreshers.pop(window, None) if event.widget is window else None)
         populate_history()
 
@@ -3070,15 +3557,18 @@ class LiveSalesApp(tk.Tk):
             )
             return False
 
-        self._apply_saved_state({
+        applied = self._apply_saved_state({
             "live": {
                 "id": live.get("id"), "running": False,
                 "first_started_at": live.get("started_at"), "started_at": None,
                 "finished_at": live.get("finished_at"),
                 "elapsed_seconds": self._history_elapsed_seconds(live),
+                **{key: live[key] for key in ("perfil", "mensagem_cliente") if key in live},
             },
             "rows": rows,
         }, history=live)
+        if applied is False:
+            return False
         self.search_var.set("")
         self._hide_search()
         for var in self.filter_vars:
@@ -3121,20 +3611,21 @@ class LiveSalesApp(tk.Tk):
             return
 
         window = tk.Toplevel(self)
-        window.title("Planilha da live - IoMarques Brechó")
+        name = PROFILE_NAMES[normalize_profile(live.get("perfil"))]
+        window.title(f"Planilha da live - {name}")
         window.geometry("980x560")
-        window.configure(bg=COLORS["app_bg"])
+        window.configure(bg=self.colors["app_bg"])
 
-        top = tk.Frame(window, bg=COLORS["primary"])
+        top = tk.Frame(window, bg=self.colors["primary"])
         top.pack(fill="x")
         title = (
-            f"Live {self._format_history_datetime(live.get('finished_at', ''))}"
+            f"{name} · {self._format_history_datetime(live.get('finished_at', ''))}"
             f" | {live.get('total', 'R$ 0,00')}"
         )
         tk.Label(
             top,
             text=title,
-            bg=COLORS["primary"],
+            bg=self.colors["primary"],
             fg="#FFFFFF",
             font=("Segoe UI Semibold", 16),
         ).pack(side="left", padx=18, pady=12)
@@ -3171,6 +3662,20 @@ class LiveSalesApp(tk.Tk):
         if (self.live_running or not self.sync_manager or not self.sync_manager.ready
                 or (self.live_id and self.sync_manager.is_deleted(self.live_id))):
             return
+        if self.live_first_started_at is None and self.live_finished_at is None:
+            settings = self.sync_manager.perfis_live() if (
+                getattr(self.sync_manager, "perfis_disponiveis", False) is True
+            ) else {}
+            perfil = self._current_profile()
+            if perfil == MARQUES_BRECHO:
+                if perfil in settings:
+                    self.live_message_template = validate_message_template(settings[perfil]["mensagem_cliente"])
+                elif not self.__dict__.get("profile_metadata_enabled", False):
+                    messagebox.showwarning("Modelo indisponível", "Conecte ao Supabase para carregar a mensagem do Marques Brechó antes de iniciar.")
+                    return
+            else:
+                self.live_message_template = IO_MESSAGE_TEMPLATE
+            self.profile_metadata_enabled = bool(settings) or self.__dict__.get("profile_metadata_enabled", False)
         now = datetime.now()
         if not self.live_id:
             self.live_id = f"live_{uuid.uuid4().hex}"
@@ -3218,20 +3723,22 @@ class LiveSalesApp(tk.Tk):
             self.finish_button.state(["!disabled"])
         elif elapsed > 0 or self.live_finished_at is not None:
             if not self.brand_header.winfo_ismapped():
-                self.brand_header.pack(fill="x", before=self.toolbar)
+                self.brand_header.pack(fill="x", before=self.profile_panel)
             self.live_status_label.configure(text="Live finalizada")
             self.post_live_frame.pack(side="left", fill="x")
             self.start_button.state(["!disabled"])
             self.finish_button.state(["disabled"])
         else:
             if not self.brand_header.winfo_ismapped():
-                self.brand_header.pack(fill="x", before=self.toolbar)
+                self.brand_header.pack(fill="x", before=self.profile_panel)
             self.live_status_label.configure(text="Aguardando início")
             self.pre_live_frame.pack(side="left", fill="x")
             self.start_button.state(["!disabled"])
             self.finish_button.state(["disabled"])
         self._refresh_duplicate_code_alert()
         self._refresh_cloud_editability()
+        self._refresh_profile_controls()
+        self._refresh_update_controls()
 
     def _current_live_status(self):
         if self.live_running:
@@ -3390,25 +3897,187 @@ class LiveSalesApp(tk.Tk):
         for item in items:
             codigo = item["codigo"] or "sem código"
             piece_lines.append(f"- Peça {codigo}: {self._format_money(item['valor'])}")
-        lines = [
-            cliente,
-            "",
-            "Oi amada!😃",
-            "Você arrematou na LIVE ",
-            "as seguintes peças:",
-            *piece_lines,
-            f"e ficou o total de {self._format_money(subtotal)}.",
-            "",
-            "👉 Você pode optar por fazer Pix",
-            "👉 Ou link de pagamento para pagar no cartão de crédito.",
-            "",
-            "Espero seu retorno com brevidade.",
-            "Pois temos muitas vezes fila nas peças.",
-            "",
-            "Aaaa não esqueça de mandar o comprovante.",
-            " Combinado?😉",
-        ]
-        return "\n".join(lines)
+        perfil = self._current_profile()
+        template = self.__dict__.get("live_message_template", DEFAULT_MESSAGES[perfil])
+        return render_client_message(template, cliente, "\n".join(piece_lines), self._format_money(subtotal))
+
+    def show_profile_message_editor(self):
+        store = self.sync_manager
+        if not store or getattr(store, "perfis_disponiveis", False) is not True:
+            messagebox.showinfo(
+                "Modelo indisponível",
+                "Conecte ao Supabase e aguarde os modelos. Se esta é a primeira atualização "
+                "com os dois perfis, prepare a estrutura de perfis no Supabase primeiro.",
+            )
+            return
+        record = store.perfis_live().get(MARQUES_BRECHO)
+        if not record:
+            return
+        auth_context = getattr(store, "contexto_autenticacao", None)
+        current_window = self.__dict__.get("profile_message_window")
+        if current_window is not None and current_window.winfo_exists():
+            current_window.lift()
+            return
+
+        window = tk.Toplevel(self)
+        self.profile_message_window = window
+        window.title("Mensagem para clientes · Marques Brechó")
+        window.geometry("860x650")
+        window.minsize(680, 540)
+        window.configure(bg=self.colors["app_bg"])
+        window.transient(self)
+        window.grab_set()
+        tk.Label(window, text="Mensagem do Marques Brechó", bg=self.colors["primary"],
+                 fg="#FFFFFF", font=("Segoe UI Semibold", 16), anchor="w").pack(fill="x", ipady=14, padx=0)
+        tk.Label(window, text=(
+            "Modelo compartilhado entre os computadores. Alterações valem para as próximas lives.\n"
+            "{cliente} = @ da pessoa  ·  {pecas} = peças e valores  ·  {total} = total da cliente"
+        ), bg=self.colors["app_bg"], fg=self.colors["text"], justify="left", wraplength=800).pack(fill="x", padx=18, pady=12)
+        body = tk.Frame(window, bg=self.colors["app_bg"])
+        body.pack(fill="both", expand=True, padx=18)
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_columnconfigure(1, weight=1)
+        body.grid_rowconfigure(1, weight=1)
+        tk.Label(body, text="Modelo editável", bg=self.colors["app_bg"], fg=self.colors["text"]).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        tk.Label(body, text="Exemplo preenchido", bg=self.colors["app_bg"], fg=self.colors["text"]).grid(row=0, column=1, sticky="w", padx=(12, 0), pady=(0, 6))
+        text = tk.Text(body, wrap="word", undo=True, font=("Segoe UI", 10),
+                       bg=self.colors["table_bg"], fg=self.colors["text"], insertbackground=self.colors["text"])
+        text.grid(row=1, column=0, sticky="nsew")
+        text.insert("1.0", record["mensagem_cliente"])
+        preview = tk.Text(body, wrap="word", state="disabled", font=("Segoe UI", 10),
+                          bg=self.colors["table_bg"], fg=self.colors["text"])
+        preview.grid(row=1, column=1, sticky="nsew", padx=(12, 0))
+        status = tk.StringVar(value="Mantenha {pecas} e {total}. O @ da cliente sempre será incluído.")
+        tk.Label(window, textvariable=status, bg=self.colors["app_bg"], fg=self.colors["text"],
+                 wraplength=800, justify="left").pack(fill="x", padx=18, pady=10)
+        actions = tk.Frame(window, bg=self.colors["app_bg"])
+        actions.pack(fill="x", padx=18, pady=(0, 16))
+        editor = {"record": record, "busy": False, "invalidated": False}
+
+        def update_preview(_event=None):
+            try:
+                sample = render_client_message(text.get("1.0", "end-1c"), "cliente_exemplo",
+                                               "- Peça 024: R$ 39,90\n- Peça 256: R$ 20,10", "R$ 60,00")
+            except ValueError as exc:
+                sample = str(exc)
+            preview.configure(state="normal")
+            preview.delete("1.0", "end")
+            preview.insert("1.0", sample)
+            preview.configure(state="disabled")
+
+        def set_busy(busy):
+            editor["busy"] = busy
+            self.profile_message_saving = busy
+            for button in (save_button, reload_button, close_button):
+                button.state(["disabled"] if busy else ["!disabled"])
+            text.configure(state="disabled" if busy else "normal")
+
+        def context_valid():
+            if not window.winfo_exists():
+                return False
+            if (not editor["invalidated"] and self.sync_manager is store
+                    and getattr(store, "contexto_autenticacao", None) == auth_context
+                    and getattr(store, "perfis_disponiveis", False) is True):
+                return True
+            editor["invalidated"] = True
+            set_busy(False)
+            save_button.state(["disabled"])
+            reload_button.state(["disabled"])
+            status.set("A conta mudou ou foi desconectada. O texto foi mantido aqui; copie suas alterações e reabra este editor após entrar novamente.")
+            return False
+
+        def save():
+            if editor["busy"] or not context_valid():
+                return
+            message = text.get("1.0", "end-1c")
+            try:
+                validate_message_template(message)
+            except ValueError as exc:
+                status.set(str(exc))
+                text.focus_set()
+                return
+            set_busy(True)
+            status.set("Salvando no Supabase…")
+
+            def apply_result(ok, detail, saved):
+                if (self.closing or not window.winfo_exists()
+                        or self.__dict__.get("profile_message_window") is not window or not context_valid()):
+                    return
+                set_busy(False)
+                status.set(detail)
+                if ok:
+                    editor["record"] = saved
+                    status.set("Mensagem salva no Supabase. Será usada nas próximas lives do Marques Brechó.")
+                    if (self._current_profile() == MARQUES_BRECHO and not self.live_running
+                            and self.live_first_started_at is None and self.live_finished_at is None):
+                        self.live_message_template = saved["mensagem_cliente"]
+                        self.profile_metadata_enabled = True
+                        if not self._save_rows(show_error=False):
+                            status.set("Modelo salvo no Supabase. A alteração do rascunho atual ainda não foi protegida; tente sincronizar antes de fechar.")
+
+            def completion(ok, detail, saved):
+                self.cloud_events.put(("call", lambda: apply_result(ok, detail, saved)))
+
+            try:
+                store.salvar_mensagem_perfil_live(MARQUES_BRECHO, message, editor["record"]["versao"], completion)
+            except Exception:
+                set_busy(False)
+                status.set("Não foi possível iniciar o salvamento. O texto permanece aqui para tentar novamente.")
+
+        def reload():
+            if editor["busy"] or not context_valid():
+                return
+            if (text.get("1.0", "end-1c") != editor["record"]["mensagem_cliente"]
+                    and not messagebox.askyesno("Recarregar modelo?", "Descartar o texto não salvo e buscar o modelo do Supabase?", parent=window)):
+                return
+            set_busy(True)
+            status.set("Buscando o modelo no Supabase…")
+
+            def apply_result(ok, detail, records):
+                if (self.closing or not window.winfo_exists()
+                        or self.__dict__.get("profile_message_window") is not window or not context_valid()):
+                    return
+                set_busy(False)
+                if ok and MARQUES_BRECHO in records:
+                    editor["record"] = records[MARQUES_BRECHO]
+                    text.delete("1.0", "end")
+                    text.insert("1.0", editor["record"]["mensagem_cliente"])
+                    update_preview()
+                    status.set("Modelo atualizado do Supabase.")
+                else:
+                    status.set(detail)
+
+            def completion(ok, detail, records):
+                self.cloud_events.put(("call", lambda: apply_result(ok, detail, records)))
+
+            try:
+                store.recarregar_perfis_live(completion)
+            except Exception:
+                set_busy(False)
+                status.set("Não foi possível buscar o modelo. O texto permanece nesta janela.")
+
+        def close():
+            if editor["busy"]:
+                return
+            if (text.get("1.0", "end-1c") != editor["record"]["mensagem_cliente"]
+                    and not messagebox.askyesno("Mensagem não salva", "Fechar e descartar as alterações desta mensagem?", parent=window)):
+                return
+            window.grab_release()
+            window.destroy()
+            self.profile_message_window = None
+            self.profile_message_context_check = None
+
+        save_button = ttk.Button(actions, text="Salvar no Supabase", command=save, style="Primary.TButton")
+        save_button.pack(side="left")
+        reload_button = ttk.Button(actions, text="Recarregar modelo", command=reload, style="Secondary.TButton")
+        reload_button.pack(side="left", padx=8)
+        close_button = ttk.Button(actions, text="Fechar", command=close, style="Secondary.TButton")
+        close_button.pack(side="right")
+        text.bind("<KeyRelease>", update_preview)
+        window.protocol("WM_DELETE_WINDOW", close)
+        self.profile_message_context_check = context_valid
+        update_preview()
+        text.focus_set()
 
     def _client_messages(self):
         summary = self._summary()
@@ -3506,7 +4175,7 @@ class LiveSalesApp(tk.Tk):
         now = datetime.now().strftime("%d/%m/%Y %H:%M")
         sections = self._summary_sections()
         lines = [
-            (f"IoMarques Brechó - Resumo | {now}", True),
+            (f"{PROFILE_NAMES[self._current_profile()]} - Resumo | {now}", True),
             (f"Duração: {self._format_elapsed(self._current_elapsed_seconds())}", False),
             ("", False),
         ]
@@ -3547,16 +4216,16 @@ class LiveSalesApp(tk.Tk):
         self._finish_active_cell()
 
         window = tk.Toplevel(self)
-        window.title("Resumo final - IoMarques Brechó")
+        window.title(f"Resumo final - {PROFILE_NAMES[self._current_profile()]}")
         window.geometry("760x540")
-        window.configure(bg=COLORS["app_bg"])
+        window.configure(bg=self.colors["app_bg"])
 
-        top = tk.Frame(window, bg=COLORS["primary"])
+        top = tk.Frame(window, bg=self.colors["primary"])
         top.pack(fill="x")
         tk.Label(
             top,
             text="Resumo final",
-            bg=COLORS["primary"],
+            bg=self.colors["primary"],
             fg="#FFFFFF",
             font=("Segoe UI Semibold", 17),
         ).pack(side="left", padx=18, pady=12)
@@ -3568,7 +4237,7 @@ class LiveSalesApp(tk.Tk):
             window,
             wrap="word",
             bg="#FFFFFF",
-            fg=COLORS["text"],
+            fg=self.colors["text"],
             relief="flat",
             font=("Consolas", 11),
             padx=16,
@@ -3606,16 +4275,16 @@ class LiveSalesApp(tk.Tk):
         self._finish_active_cell()
 
         window = tk.Toplevel(self)
-        window.title("Mensagens para clientes - IoMarques Brechó")
+        window.title(f"Mensagens para clientes - {PROFILE_NAMES[self._current_profile()]}")
         window.geometry("900x540")
-        window.configure(bg=COLORS["app_bg"])
+        window.configure(bg=self.colors["app_bg"])
 
-        top = tk.Frame(window, bg=COLORS["primary"])
+        top = tk.Frame(window, bg=self.colors["primary"])
         top.pack(fill="x")
         tk.Label(
             top,
             text="Mensagens para clientes",
-            bg=COLORS["primary"],
+            bg=self.colors["primary"],
             fg="#FFFFFF",
             font=("Segoe UI Semibold", 17),
         ).pack(side="left", padx=18, pady=12)
@@ -3625,13 +4294,13 @@ class LiveSalesApp(tk.Tk):
             tk.Label(
                 window,
                 text="Nenhuma peça com cliente titular ainda.",
-                bg=COLORS["app_bg"],
-                fg=COLORS["button_text"],
+                bg=self.colors["app_bg"],
+                fg=self.colors["button_text"],
                 font=("Segoe UI", 11),
             ).pack(fill="both", expand=True, padx=18, pady=18)
             return
 
-        list_shell = tk.Frame(window, bg="#FFFFFF", highlightbackground=COLORS["grid"], highlightthickness=1)
+        list_shell = tk.Frame(window, bg="#FFFFFF", highlightbackground=self.colors["grid"], highlightthickness=1)
         list_shell.pack(fill="both", expand=True, padx=18, pady=18)
 
         canvas = tk.Canvas(list_shell, bg="#FFFFFF", highlightthickness=0)
@@ -3651,9 +4320,9 @@ class LiveSalesApp(tk.Tk):
         list_frame.bind("<Configure>", configure_scroll)
         canvas.bind("<Configure>", configure_width)
 
-        copied_bg = "#DDF4E5"
+        copied_bg = self._theme_color("#DDF4E5")
         for index, (cliente, message) in enumerate(messages, start=1):
-            row = tk.Frame(list_frame, bg="#FFFFFF", highlightbackground=COLORS["grid"], highlightthickness=1)
+            row = tk.Frame(list_frame, bg="#FFFFFF", highlightbackground=self.colors["grid"], highlightthickness=1)
             row.pack(fill="x", padx=10, pady=(10 if index == 1 else 0, 8))
             row.grid_columnconfigure(2, weight=1)
 
@@ -3661,7 +4330,7 @@ class LiveSalesApp(tk.Tk):
             pix_copied_var = tk.BooleanVar(value=False)
 
             def paint_copied_state(copied_var=copied_var, pix_copied_var=pix_copied_var, row=row):
-                bg = copied_bg if copied_var.get() or pix_copied_var.get() else "#FFFFFF"
+                bg = self._theme_color("#DDF4E5") if copied_var.get() or pix_copied_var.get() else "#FFFFFF"
                 row.configure(bg=bg)
                 for child in row.winfo_children():
                     if isinstance(child, tk.Checkbutton):
@@ -3691,7 +4360,7 @@ class LiveSalesApp(tk.Tk):
                 row,
                 text=f"{index}.",
                 bg="#FFFFFF",
-                fg=COLORS["text"],
+                fg=self.colors["text"],
                 font=("Segoe UI Semibold", 11),
                 anchor="w",
             )
@@ -3703,7 +4372,7 @@ class LiveSalesApp(tk.Tk):
                 textvariable=name_var,
                 state="readonly",
                 readonlybackground="#FFFFFF",
-                fg=COLORS["text"],
+                fg=self.colors["text"],
                 relief="flat",
                 bd=0,
                 font=("Segoe UI Semibold", 11),
@@ -3760,7 +4429,8 @@ class LiveSalesApp(tk.Tk):
             messagebox.showinfo("Nada para exportar", "Preencha pelo menos uma linha antes de exportar.")
             return
 
-        default_name = f"live_iomarques_brecho_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.xlsx"
+        slug = "marques_brecho" if self._current_profile() == MARQUES_BRECHO else "iomarques_brecho"
+        default_name = f"live_{slug}_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.xlsx"
         path = filedialog.asksaveasfilename(
             title="Salvar planilha da live",
             defaultextension=".xlsx",
@@ -3820,6 +4490,7 @@ class LiveSalesApp(tk.Tk):
         stats = self._current_live_stats()
         metadata_sheet.append(["Campo", "Valor"])
         metadata_sheet.append(["ID da live", self.live_id or ""])
+        metadata_sheet.append(["Perfil", PROFILE_NAMES[self._current_profile()]])
         metadata_sheet.append(["Status", self._current_live_status()])
         metadata_sheet.append(
             [
@@ -3844,7 +4515,7 @@ class LiveSalesApp(tk.Tk):
 
         history_sheet = wb.create_sheet("Histórico de lives")
         history_sheet.append(
-            ["Finalizada em", "Iniciada em", "Duração", "Peças", "Vendidas", "Clientes", "Total", "10%", "Nomes das clientes"]
+            ["Finalizada em", "Iniciada em", "Duração", "Peças", "Vendidas", "Clientes", "Total", "10%", "Nomes das clientes", "Perfil"]
         )
         for live in self._read_history():
             history_sheet.append(
@@ -3858,6 +4529,7 @@ class LiveSalesApp(tk.Tk):
                     live.get("total", "R$ 0,00"),
                     self._history_commission_value(live),
                     ", ".join(live.get("clients", [])),
+                    PROFILE_NAMES[normalize_profile(live.get("perfil"))],
                 ]
             )
 
@@ -3867,10 +4539,10 @@ class LiveSalesApp(tk.Tk):
         messagebox.showinfo("Exportação concluída", f"Planilha salva em:\n{path}")
 
     def _format_workbook(self, *sheets):
-        header_fill = PatternFill("solid", fgColor=COLORS["table_header"].replace("#", ""))
-        sold_fill = PatternFill("solid", fgColor=COLORS["sold_row"].replace("#", ""))
-        header_font = Font(color=COLORS["table_header_text"].replace("#", ""), bold=True)
-        text_font = Font(color=COLORS["text"].replace("#", ""))
+        header_fill = PatternFill("solid", fgColor=self.colors["table_header"].replace("#", ""))
+        sold_fill = PatternFill("solid", fgColor=self.colors["sold_row"].replace("#", ""))
+        header_font = Font(color=self.colors["table_header_text"].replace("#", ""), bold=True)
+        text_font = Font(color=self.colors["text"].replace("#", ""))
 
         for sheet in sheets:
             for cell in sheet[1]:
@@ -3973,7 +4645,7 @@ class LiveSalesApp(tk.Tk):
         )
         separator = "-" * len(header)
         lines = [
-            f"IoMarques Brechó - {title}",
+            f"{PROFILE_NAMES[self._current_profile()]} - {title}",
             f"Gerado em: {now} | Duração: {self._format_elapsed(self._current_elapsed_seconds())} | Linhas: {len(rows)}",
             "",
             header,
@@ -4098,7 +4770,7 @@ class LiveSalesApp(tk.Tk):
             old_font = gdi32.SelectObject(hdc, regular_font)
             gdi32.SetBkMode(hdc, 1)
 
-            docinfo = DOCINFOW(ctypes.sizeof(DOCINFOW), f"IoMarques Brechó - {title}", None, None, 0)
+            docinfo = DOCINFOW(ctypes.sizeof(DOCINFOW), f"{PROFILE_NAMES[self._current_profile()]} - {title}", None, None, 0)
             if gdi32.StartDocW(hdc, ctypes.byref(docinfo)) <= 0:
                 raise ctypes.WinError(ctypes.get_last_error())
             doc_started = True
@@ -4241,12 +4913,12 @@ class LiveSalesApp(tk.Tk):
         return buffer.value
 
     def _format_print_workbook(self, sheet):
-        header_fill = PatternFill("solid", fgColor=COLORS["table_header"].replace("#", ""))
-        header_font = Font(color=COLORS["table_header_text"].replace("#", ""), bold=True)
-        text_font = Font(color=COLORS["text"].replace("#", ""))
+        header_fill = PatternFill("solid", fgColor=self.colors["table_header"].replace("#", ""))
+        header_font = Font(color=self.colors["table_header_text"].replace("#", ""), bold=True)
+        text_font = Font(color=self.colors["text"].replace("#", ""))
 
         sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(COLUMNS) + 1)
-        sheet.cell(row=1, column=1).font = Font(color=COLORS["text"].replace("#", ""), bold=True, size=13)
+        sheet.cell(row=1, column=1).font = Font(color=self.colors["text"].replace("#", ""), bold=True, size=13)
         sheet.cell(row=2, column=1).font = text_font
         sheet.cell(row=3, column=1).font = text_font
 
@@ -4424,7 +5096,7 @@ class LiveSalesApp(tk.Tk):
             left = margin_x + (printable_width - draw_width) // 2
             top = margin_y + (printable_height - draw_height) // 2
 
-            docinfo = DOCINFOW(ctypes.sizeof(DOCINFOW), f"IoMarques Brechó - {title}", None, None, 0)
+            docinfo = DOCINFOW(ctypes.sizeof(DOCINFOW), f"{PROFILE_NAMES[self._current_profile()]} - {title}", None, None, 0)
             if gdi32.StartDocW(hdc, ctypes.byref(docinfo)) <= 0:
                 raise ctypes.WinError(ctypes.get_last_error())
             doc_started = True
@@ -4521,6 +5193,11 @@ class LiveSalesApp(tk.Tk):
             self._finish_cell_edit(*self.active_cell)
 
     def _on_close(self):
+        editor = self.__dict__.get("profile_message_window")
+        if editor is not None and editor.winfo_exists():
+            editor.lift()
+            messagebox.showinfo("Mensagem aberta", "Aguarde o salvamento e feche a janela da mensagem antes de sair do aplicativo.", parent=editor)
+            return
         self._finish_active_cell()
         saved = self._save_rows(show_error=False)
         if not saved:
@@ -4538,6 +5215,9 @@ class LiveSalesApp(tk.Tk):
                 "Deseja fechar agora?", default="no",
             ):
                 return
+        self._close_application()
+
+    def _close_application(self):
         self.closing = True
         if self.timer_job is not None:
             self.after_cancel(self.timer_job)
@@ -4547,6 +5227,9 @@ class LiveSalesApp(tk.Tk):
             self.after_cancel(self.cloud_poll_job)
         if self.sync_manager is not None:
             self.sync_manager.shutdown()
+        client = self.__dict__.get("update_client")
+        if client is not None:
+            client.shutdown()
         self.destroy()
 
 
