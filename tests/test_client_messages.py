@@ -3,7 +3,7 @@ import unittest
 from decimal import Decimal
 from unittest.mock import Mock
 
-from app import COLUMNS, LiveSalesApp
+from app import ROW_COLUMNS, LiveSalesApp
 
 
 class ClientMessagesTests(unittest.TestCase):
@@ -13,7 +13,7 @@ class ClientMessagesTests(unittest.TestCase):
         self.app._rows = Mock(return_value=[])
 
     def set_rows(self, rows):
-        self.rows = [{column: row.get(column, "") for column in COLUMNS} for row in rows]
+        self.rows = [{column: row.get(column, "") for column in ROW_COLUMNS} for row in rows]
         self.app._rows.return_value = self.rows
 
     def test_identification_has_one_at_sign_and_no_outer_whitespace(self):

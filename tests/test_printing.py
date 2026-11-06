@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from app import CHECKBOX_TEXT, COLUMNS, LiveSalesApp
+from app import CHECKBOX_TEXT, ROW_COLUMNS, LiveSalesApp
 
 
 class UnsoldPrintingTests(unittest.TestCase):
@@ -13,7 +13,7 @@ class UnsoldPrintingTests(unittest.TestCase):
 
     def set_rows(self, rows):
         self.app.row_vars = [
-            [Mock(get=Mock(return_value=row.get(column, ""))) for column in COLUMNS]
+            [Mock(get=Mock(return_value=row.get(column, ""))) for column in ROW_COLUMNS]
             for row in rows
         ]
 
@@ -68,6 +68,18 @@ class UnsoldPrintingTests(unittest.TestCase):
         self.set_rows([{"codigo": "111", "cliente": "Vendida"}, {"codigo": "222"}])
         self.assertTrue(self.app.print_sheet(show_success=False))
         self.assertEqual(self.printed_indices(), [1, 2])
+
+    def test_size_is_printed_and_time_stays_available_for_unsold_pieces(self):
+        self.set_rows([{"codigo": "111", "tamanho": "P/M", "tempo": "00:01:23"}])
+        self.assertTrue(self.app.print_sheet(show_success=False))
+        sales = self.app._send_text_to_printer.call_args.args[0]
+        self.assertIn("Tamanho", sales)
+        self.assertIn("P/M", sales)
+        self.assertNotIn("00:01:23", sales)
+        self.assertTrue(self.app.print_unsold_pieces(show_success=False))
+        unsold = self.app._send_text_to_printer.call_args.args[0]
+        self.assertIn("P/M", unsold)
+        self.assertIn("00:01:23", unsold)
 
     @patch("app.messagebox.showinfo")
     def test_print_all_keeps_original_indices_in_unsold_report(self, _showinfo):

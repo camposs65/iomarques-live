@@ -77,7 +77,7 @@ class HistoryMonthTests(unittest.TestCase):
             "valor": "1.000,00", "codigo": "001", "cliente": "Teste",
             "suplente": "", "tempo": "00:01:00",
         }, {
-            "valor": "59,90", "codigo": "014", "cliente": ".",
+            "valor": "59,90", "codigo": "014", "tamanho": "44", "cliente": ".",
             "suplente": "", "tempo": "00:01:30",
         }]
         self.app._rows = Mock(return_value=rows)
@@ -110,8 +110,12 @@ class HistoryMonthTests(unittest.TestCase):
                 self.assertEqual(summary["F2"].value, 1000)
                 self.assertEqual(summary["B4"].value, "TOTAL GERAL")
                 self.assertEqual(summary["F4"].value, 1059.90)
-                self.assertEqual(workbook["Vendas"]["D3"].value, ".")
-                self.assertIsNone(workbook["Vendas"]["D3"].fill.patternType)
+                sales = workbook["Vendas"]
+                self.assertEqual(sales["D3"].value, "44")
+                self.assertEqual(sales["E3"].value, ".")
+                self.assertIsNone(sales["E3"].fill.patternType)
+                self.assertEqual(sales["G3"].value, "00:01:30")
+                self.assertTrue(sales.column_dimensions["G"].hidden)
             finally:
                 workbook.close()
 

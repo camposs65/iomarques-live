@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime
 from unittest.mock import Mock, patch
 
-from app import COLORS, COLUMNS, LiveSalesApp
+from app import COLORS, LiveSalesApp
 from live_profiles import IO_MARQUES, MARQUES_BRECHO, MARQUES_MESSAGE_TEMPLATE, MONOCHROME_COLORS
 
 
@@ -61,7 +61,7 @@ class ProfileThemeTests(unittest.TestCase):
 
     def test_masculine_operational_colors_are_monochrome_and_return_to_io(self):
         self.app._set_live_profile(MARQUES_BRECHO)
-        self.app._add_row(["R$ 30,00", "1", "ana", "", "00:00:03"])
+        self.app._add_row(["R$ 30,00", "1", "M", "ana", "", "00:00:03"])
         self.app._apply_sync_status("synced", "OK", "teste")
 
         def walk(widget):

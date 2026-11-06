@@ -82,7 +82,7 @@ class LiveProfileIntegrationTests(unittest.TestCase):
         self.app.destroy()
 
     def fill_row(self):
-        for index, value in enumerate(("R$ 25,00", "024", "ana", "", "00:00:03")):
+        for index, value in enumerate(("R$ 25,00", "024", "", "ana", "", "00:00:03")):
             self.app.row_vars[0][index].set(value)
 
     def test_start_captures_latest_shared_model_and_keeps_it_for_state_and_history(self):

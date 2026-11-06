@@ -1,4 +1,4 @@
-# IoMarques Brechó — Controle de Vendas da Live · v1.9.4
+# IoMarques Brechó — Controle de Vendas da Live · v1.9.5
 
 Aplicativo para Windows usado para anotar as peças durante as lives no Instagram. O Supabase guarda a live em andamento e o histórico completo; a instalação prepara o programa e cria o atalho na Área de Trabalho.
 
@@ -6,7 +6,7 @@ Aplicativo para Windows usado para anotar as peças durante as lives no Instagra
 
 Requisitos: Windows 10 ou 11 de 64 bits (x64), internet e um usuário do Controle do Brechó. Não é necessário instalar Python manualmente ou executar comandos.
 
-1. No GitHub, abra **Releases** e baixe o arquivo `IoMarquesLive-v1.9.4-Instalacao.zip` da versão mais recente. Também é possível usar **Code → Download ZIP** neste repositório.
+1. No GitHub, abra **Releases** e baixe o arquivo `IoMarquesLive-vX.Y.Z-Instalacao.zip` da versão mais recente. Também é possível usar **Code → Download ZIP** neste repositório.
 2. Clique com o botão direito no ZIP e escolha **Extrair Tudo**. Não execute o instalador de dentro do arquivo compactado.
 3. Abra a pasta extraída e dê dois cliques em **Instalar.bat**.
 4. Aguarde a preparação inicial e a janela de progresso. Na primeira instalação, o download e a montagem do aplicativo podem levar alguns minutos; mantenha a internet conectada.
@@ -65,7 +65,8 @@ Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-public
 - Antes de iniciar, escolha `Io Marques` ou `Marques Brechó` no interruptor de perfil. O masculino usa preto, branco e cinza; Io Marques mantém suas cores habituais.
 - Clique em `Iniciar live` no momento em que a gravação da live começar.
 - O contador fica rodando no canto superior direito.
-- Ao preencher `Valor` ou `Código`, o app salva automaticamente o `Tempo` daquela peça.
+- Ao preencher `Valor` ou `Código`, o app salva automaticamente o horário daquela peça, sem exibir uma coluna de tempo. A caixa junto do número da peça continua disponível para marcar ou remover esse horário.
+- Preencha `Tamanho` entre `Código` e `Cliente`, com texto livre, por exemplo `M`, `38` ou `P/M`. O campo é opcional.
 - Clique em `Finalizar live` quando a live terminar.
 - O app pede confirmação antes de finalizar a live.
 - Ao finalizar, a live entra no histórico automaticamente.
@@ -75,12 +76,18 @@ Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-public
 - Digitar na última linha vazia cria outra linha automaticamente.
 - Os dados são enviados automaticamente ao Supabase. Se houver queda de conexão, ficam protegidos na fila temporária até o envio ser confirmado.
 - Ao digitar `39,90` no valor, o app transforma em `R$ 39,90`.
-- Ao apagar `Valor` e `Código`, o campo `Tempo` fica vazio novamente.
+- Ao apagar `Valor` e `Código`, o horário automático da peça é limpo. Uma marca feita pela caixa da peça é mantida até desmarcá-la.
 - Use as setas do teclado para navegar entre as células.
 - Use `Ctrl+Z` para desfazer, `Ctrl+Y` para refazer e `Ctrl+F` para abrir a pesquisa.
 - Use a setinha no cabeçalho de cada coluna para filtrar, como no Excel.
 - Passe o mouse sobre `Cliente` ou `Suplente` para mostrar o `X` de remoção.
 - Durante a live, o cabeçalho grande da marca fica escondido para dar mais espaço à planilha.
+
+### Habilitar tamanho das peças
+
+Execute uma vez a migration `supabase/migrations/20261106000100_tamanho_pecas_live.sql` do projeto `brecho-controle` no Supabase. Ela aceita o tamanho opcional e impede versões antigas de apagarem esse dado. Nenhuma live anterior precisa ser convertida. O aplicativo só habilita a edição de Tamanho depois de confirmar a atualização; as demais colunas e o cronômetro funcionam normalmente sem ela.
+
+Tamanho aparece na planilha, no histórico detalhado e na aba Vendas do Excel. Nessa aba, Tempo continua disponível como coluna oculta. Os horários armazenados continuam sendo enviados para os recortes.
 
 ### Perfil e mensagem do Marques Brechó
 
@@ -130,9 +137,9 @@ O instalador valida essa configuração e cria `integracao_supabase.json` na pas
 
 Exemplo da IoMarques Brechó:
 
-| Peça | Valor | Código | Cliente | Suplente | Tempo |
+| Peça | Valor | Código | Tamanho | Cliente | Suplente |
 | --- | --- | --- | --- | --- | --- |
-| 1 | R$ 39,90 | 345 | chimabyliz | anapaula | 00:12:08 |
+| 1 | R$ 39,90 | 345 | M | cliente.exemplo | suplente.exemplo |
 
 ## Botões
 

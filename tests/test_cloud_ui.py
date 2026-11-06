@@ -2,9 +2,11 @@ import copy
 import tkinter as tk
 import unittest
 from tkinter import ttk
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from app import LiveSalesApp
+from app import CLIENT_COL, CODE_COL, COLUMNS, ROW_COLUMNS, SIZE_COL, SUPLENTE_COL, TIME_COL, LiveSalesApp
+from supabase_sync import prepare_live_payload
 
 
 ROW = {"valor": "R$ 20,00", "codigo": "001", "cliente": "", "suplente": "", "tempo": "00:00:03"}
@@ -13,6 +15,7 @@ ROW = {"valor": "R$ 20,00", "codigo": "001", "cliente": "", "suplente": "", "tem
 class FakeStore:
     def __init__(self, *_args, **_kwargs):
         self.ready = self.cloud_loaded = self.is_authenticated = self.is_configured = True
+        self.tamanho_pecas_disponivel = False
         self.is_admin = False
         self.needs_legacy_bootstrap = True
         self.has_pending = False
@@ -69,8 +72,8 @@ class CloudUiTests(unittest.TestCase):
 
     def fill_row(self, row=None):
         row = row or ROW
-        for index, column in enumerate(("valor", "codigo", "cliente", "suplente", "tempo")):
-            self.app.row_vars[0][index].set(row[column])
+        for index, column in enumerate(ROW_COLUMNS):
+            self.app.row_vars[0][index].set(row.get(column, ""))
 
     def history_widgets(self):
         self.app.show_history()
@@ -104,10 +107,91 @@ class CloudUiTests(unittest.TestCase):
         self.assertIn("updated_at", self.store.saved[0][0])
         self.assertTrue(self.app._save_rows())
         self.assertEqual(len(self.store.saved), 1)
-        self.app.row_vars[0][2].set("cliente de teste")
+        self.app.row_vars[0][CLIENT_COL].set("cliente de teste")
         self.app._save_rows()
         self.assertEqual(self.app.live_id, first_id)
         self.assertEqual(self.store.saved[-1][0]["rows"][0]["cliente"], "cliente de teste")
+
+    def test_size_column_is_visible_but_does_not_change_legacy_sync(self):
+        self.assertEqual(COLUMNS, ("valor", "codigo", "tamanho", "cliente", "suplente"))
+        self.assertEqual(len(self.app.cell_entries[0]), len(COLUMNS))
+        self.assertFalse(self.app._cell_exists(0, TIME_COL))
+        self.assertEqual(self.app.cell_entries[0][SIZE_COL].cget("state"), "disabled")
+        self.fill_row()
+        self.assertTrue(self.app._save_rows())
+        self.assertEqual(self.store.saved[-1][0]["rows"], [ROW])
+        self.assertNotIn("formato_linhas", self.store.saved[-1][0])
+        with patch.object(self.app, "_focus_cell") as focus:
+            self.app._move_focus_right(0, CODE_COL)
+            focus.assert_called_once_with(0, CLIENT_COL)
+        self.store.tamanho_pecas_disponivel = True
+        self.app._apply_cloud_data()
+        size_entry = self.app.cell_entries[0][SIZE_COL]
+        self.assertEqual(size_entry.cget("state"), "normal")
+        size_entry.insert(0, "X" * 101)
+        self.assertEqual(size_entry.get(), "")
+        with patch.object(self.app, "_focus_cell") as focus:
+            self.app._move_focus_right(0, CODE_COL)
+            self.app._move_focus_right(0, SIZE_COL)
+            self.app._move_focus_right(0, SUPLENTE_COL)
+            self.assertEqual([call.args for call in focus.call_args_list], [(0, SIZE_COL), (0, CLIENT_COL), (1, 0)])
+        self.assertEqual(len(self.store.saved), 1)
+
+    @patch("app.messagebox.askyesno", return_value=True)
+    def test_size_and_hidden_time_reach_history_and_recorder_projection(self, _confirm):
+        self.store.tamanho_pecas_disponivel = True
+        self.app._apply_cloud_data()
+        self.app.start_live()
+        edit = SimpleNamespace(keysym="a")
+        with patch.object(self.app, "_current_elapsed_seconds", return_value=23):
+            self.app.cell_entries[0][SIZE_COL].insert(0, "P/M")
+            self.app._on_key_release(edit, 0, SIZE_COL)
+            self.assertEqual(self.app.row_vars[0][TIME_COL].get(), "")
+            self.app.row_vars[0][CODE_COL].set("014")
+            self.app._on_key_release(edit, 0, CODE_COL)
+        self.assertEqual(self.app.row_vars[0][TIME_COL].get(), "00:00:23")
+        self.assertTrue(self.app.time_check_vars[0].get())
+        self.app.row_vars[0][CLIENT_COL].set(".")
+        with patch.object(self.app, "_current_elapsed_seconds", return_value=42):
+            self.app._on_key_release(edit, 0, CODE_COL)
+            self.app.finish_live()
+        state, history = self.store.saved[-1]
+        self.assertEqual(state["formato_linhas"], 2)
+        self.assertEqual(history["formato_linhas"], 2)
+        self.assertEqual(state["rows"], history["rows"])
+        self.assertEqual(history["rows"][0]["tamanho"], "P/M")
+        self.assertEqual(history["rows"][0]["tempo"], "00:00:23")
+        self.assertEqual(history["rows"][0]["cliente"], ".")
+        self.assertEqual(history["sold_count"], 0)
+        projection = prepare_live_payload(history)
+        self.assertEqual(projection["pecas"][0]["tempo_segundos"], 23)
+        self.assertNotIn("tamanho", projection["pecas"][0])
+
+    def test_reopen_and_undo_size_edits_keep_manual_mark_and_legacy_guard(self):
+        self.store.tamanho_pecas_disponivel = True
+        live = {"id": "old", "started_at": "2026-09-01T12:00:00", "finished_at": "2026-09-01T13:00:00",
+                "duration": "01:00:00", "total": "R$ 0,00", "formato_linhas": 2,
+                "rows": [{**ROW, "tamanho": "38"}]}
+        self.assertTrue(self.app._load_history_live_into_main_sheet(live))
+        self.assertEqual(self.app._rows(), live["rows"])
+        self.assertTrue(self.app._save_rows())
+        self.assertEqual(self.store.saved, [])
+        self.app.time_check_buttons[0].invoke()
+        self.assertEqual(self.app.row_vars[0][TIME_COL].get(), "")
+        with patch.object(self.app, "_current_elapsed_seconds", return_value=31):
+            self.app.time_check_buttons[0].invoke()
+        self.app._record_undo_state()
+        self.app.row_vars[0][SIZE_COL].set("")
+        self.assertTrue(self.app._save_rows())
+        state, history = self.store.saved[-1]
+        self.assertEqual((state["formato_linhas"], history["formato_linhas"]), (2, 2))
+        self.assertNotIn("tamanho", history["rows"][0])
+        self.app.undo()
+        self.assertEqual(self.app._rows()[0]["tamanho"], "38")
+        self.assertEqual(self.app._rows()[0]["tempo"], "00:00:31")
+        self.app.redo()
+        self.assertNotIn("tamanho", self.app._rows()[0])
+        self.assertEqual(self.app._rows()[0]["tempo"], "00:00:31")
 
     @patch("app.messagebox.askyesno", return_value=True)
     def test_finish_saves_state_and_full_history_in_one_operation(self, _confirm):

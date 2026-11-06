@@ -45,24 +45,29 @@ except ImportError:
 from roguelike_game import RogueBrechoGame
 
 
-APP_VERSION = "1.9.4"
+APP_VERSION = "1.9.5"
 
-COLUMNS = ("valor", "codigo", "cliente", "suplente", "tempo")
+COLUMNS = ("valor", "codigo", "tamanho", "cliente", "suplente")
+ROW_COLUMNS = (*COLUMNS, "tempo")
 HEADERS = {
     "valor": "Valor",
     "codigo": "Código",
+    "tamanho": "Tamanho",
     "cliente": "Cliente",
     "suplente": "Suplente",
     "tempo": "Tempo",
 }
-COLUMN_WIDTHS = (130, 110, 250, 250, 115)
+COLUMN_WIDTHS = (130, 110, 84, 250, 250)
 INDEX_COLUMN_WIDTH = 68
+MAX_SIZE_LENGTH = 100
+SIZE_ROW_FORMAT = 2
 
 VALUE_COL = COLUMNS.index("valor")
 CODE_COL = COLUMNS.index("codigo")
+SIZE_COL = COLUMNS.index("tamanho")
 CLIENT_COL = COLUMNS.index("cliente")
 SUPLENTE_COL = COLUMNS.index("suplente")
-TIME_COL = COLUMNS.index("tempo")
+TIME_COL = ROW_COLUMNS.index("tempo")
 CLEARABLE_CLIENT_COLS = (CLIENT_COL, SUPLENTE_COL)
 
 if getattr(sys, "frozen", False):
@@ -149,6 +154,7 @@ class LiveSalesApp(tk.Tk):
         self.minsize(960, 580)
 
         self.row_vars = []
+        self.validate_size = (self.register(lambda value: len(value) <= MAX_SIZE_LENGTH), "%P")
         self.index_frames = []
         self.index_labels = []
         self.time_check_vars = []
@@ -194,6 +200,7 @@ class LiveSalesApp(tk.Tk):
         self.sheet_dirty = False
         self.applying_cloud = False
         self.sheet_load_error = False
+        self.sheet_size_format = False
         self.last_saved_sheet = None
         self.last_save_failed = False
         self.closing = False
@@ -702,9 +709,15 @@ class LiveSalesApp(tk.Tk):
         editable = bool(self.sync_manager and self.sync_manager.ready
                         and not self.__dict__.get("sheet_load_error", False)
                         and not (self.live_id and self.sync_manager.is_deleted(self.live_id)))
+        size_available = self._size_column_available()
         for entries in self.cell_entries:
-            for entry in entries:
-                entry.configure(state="normal" if editable else "disabled")
+            for col, entry in enumerate(entries):
+                entry.configure(state="normal" if editable and (col != SIZE_COL or size_available) else "disabled")
+        if "sheet_hint" in self.__dict__:
+            hint = "O tempo é salvo ao preencher Valor ou Código durante a live."
+            if editable and not size_available:
+                hint += " Tamanho aguarda atualização do banco."
+            self.sheet_hint.configure(text=hint)
         for button in self.time_check_buttons:
             button.configure(state="normal" if editable else "disabled")
         for buttons in self.clear_buttons:
@@ -713,6 +726,9 @@ class LiveSalesApp(tk.Tk):
                     button.configure(state="normal" if editable else "disabled")
         self.start_button.state(["!disabled" if editable and not self.live_running else "disabled"])
         self.finish_button.state(["!disabled" if editable and self.live_running else "disabled"])
+
+    def _size_column_available(self):
+        return getattr(self.sync_manager, "tamanho_pecas_disponivel", False) is True
 
     def _sheet_is_pristine(self):
         return (not self.__dict__.get("sheet_load_error", False)
@@ -762,6 +778,9 @@ class LiveSalesApp(tk.Tk):
             if (not isinstance(data, dict) or not isinstance(data.get("rows", []), list)
                     or any(not isinstance(row, dict) for row in data.get("rows", []))):
                 raise ValueError("As linhas desta live são inválidas.")
+            if any(not isinstance(row.get("tamanho", ""), str) or len(row.get("tamanho", "")) > MAX_SIZE_LENGTH
+                   for row in data.get("rows", [])):
+                raise ValueError("Há um tamanho de peça inválido nesta live.")
         except ValueError as exc:
             messagebox.showerror("Live inválida", str(exc))
             return False
@@ -1259,18 +1278,17 @@ class LiveSalesApp(tk.Tk):
         footer = tk.Frame(self, bg=self.colors["app_bg"])
         footer.pack(fill="x", padx=24, pady=(0, 14))
 
-        footer_hint = tk.Label(
+        self.sheet_hint = tk.Label(
             footer,
             text=(
-                "Clique em Iniciar live para gravar os tempos. "
-                "Ao preencher Valor ou Código, o Tempo da peça é salvo automaticamente."
+                "O tempo é salvo ao preencher Valor ou Código durante a live."
             ),
             bg=self.colors["app_bg"],
             fg=self.colors["button_text"],
             font=("Segoe UI", 10),
             anchor="w",
         )
-        footer_hint.pack(side="left", fill="x", expand=True)
+        self.sheet_hint.pack(side="left", fill="x", expand=True)
 
         tk.Label(
             footer,
@@ -2283,7 +2301,7 @@ class LiveSalesApp(tk.Tk):
 
             changed_rows = set()
             for row_index, row in enumerate(rows):
-                for col, column in enumerate(COLUMNS):
+                for col, column in enumerate(ROW_COLUMNS):
                     value = str(row.get(column, "")).strip()
                     if self.row_vars[row_index][col].get() != value:
                         self.row_vars[row_index][col].set(value)
@@ -2431,7 +2449,7 @@ class LiveSalesApp(tk.Tk):
 
         matches = []
         for row_index, row_vars in enumerate(self.row_vars):
-            for col, var in enumerate(row_vars):
+            for col, var in enumerate(row_vars[:len(COLUMNS)]):
                 if query in var.get().strip().lower():
                     matches.append((row_index, col))
 
@@ -2458,7 +2476,7 @@ class LiveSalesApp(tk.Tk):
 
     def _add_row(self, values=None):
         if values is None:
-            values = [""] * len(COLUMNS)
+            values = [""] * len(ROW_COLUMNS)
 
         row_index = len(self.row_vars)
         row_vars = []
@@ -2475,7 +2493,8 @@ class LiveSalesApp(tk.Tk):
             highlightthickness=1,
         )
         index_cell.grid(row=row_index, column=0, sticky="nsew")
-        time_check_var = tk.BooleanVar(value=bool(values[TIME_COL].strip() if TIME_COL < len(values) else ""))
+        time_var = tk.StringVar(value=values[TIME_COL] if TIME_COL < len(values) else "")
+        time_check_var = tk.BooleanVar(value=bool(time_var.get().strip()))
         manual_time_var = tk.BooleanVar(value=False)
         time_check = tk.Checkbutton(
             index_cell,
@@ -2530,6 +2549,10 @@ class LiveSalesApp(tk.Tk):
                 font=("Segoe UI", 11),
             )
             entry.pack(side="left", fill="both", expand=True, padx=(10, 4), pady=7)
+
+            if col == SIZE_COL:
+                entry.configure(validate="key", validatecommand=self.validate_size,
+                                state="normal" if self._size_column_available() else "disabled")
 
             if col == CLIENT_COL:
                 customer_count = tk.Label(cell, text="", bg=self.colors["table_bg"],
@@ -2586,6 +2609,7 @@ class LiveSalesApp(tk.Tk):
         self.time_check_vars.append(time_check_var)
         self.time_check_buttons.append(time_check)
         self.manual_time_vars.append(manual_time_var)
+        row_vars.append(time_var)
         self.row_vars.append(row_vars)
         self.cell_frames.append(row_frames)
         self.cell_entries.append(row_entries)
@@ -2638,7 +2662,7 @@ class LiveSalesApp(tk.Tk):
             self._show_clear_button(row, col)
 
     def _maybe_stamp_piece_time(self, row):
-        if not self._cell_exists(row, TIME_COL):
+        if not 0 <= row < len(self.row_vars):
             return
         has_piece_reference = (
             self.row_vars[row][VALUE_COL].get().strip() or self.row_vars[row][CODE_COL].get().strip()
@@ -2651,7 +2675,7 @@ class LiveSalesApp(tk.Tk):
         self._refresh_time_checkbox(row)
 
     def _toggle_manual_time(self, row):
-        if not self._cell_exists(row, TIME_COL) or self.restoring_rows:
+        if not 0 <= row < len(self.row_vars) or self.restoring_rows:
             return
 
         checked = self.time_check_vars[row].get()
@@ -2675,7 +2699,7 @@ class LiveSalesApp(tk.Tk):
         self._save_rows()
 
     def _refresh_time_checkbox(self, row):
-        if row < 0 or row >= len(self.time_check_vars) or not self._cell_exists(row, TIME_COL):
+        if not 0 <= row < min(len(self.time_check_vars), len(self.row_vars)):
             return
         has_time = bool(self.row_vars[row][TIME_COL].get().strip())
         self.time_check_vars[row].set(has_time)
@@ -2685,6 +2709,8 @@ class LiveSalesApp(tk.Tk):
     def _move_focus_left(self, row, col):
         target_row = row
         target_col = col - 1
+        if target_col == SIZE_COL and not self._size_column_available():
+            target_col -= 1
         if target_col < 0:
             target_row = max(0, row - 1)
             target_col = len(COLUMNS) - 1
@@ -2693,6 +2719,8 @@ class LiveSalesApp(tk.Tk):
     def _move_focus_right(self, row, col):
         target_row = row
         target_col = col + 1
+        if target_col == SIZE_COL and not self._size_column_available():
+            target_col += 1
         if target_col >= len(COLUMNS):
             target_row = row + 1
             target_col = 0
@@ -2903,10 +2931,19 @@ class LiveSalesApp(tk.Tk):
     def _rows(self, include_empty=False):
         rows = []
         for row_vars in self.row_vars:
-            row = {column: row_vars[col].get().strip() for col, column in enumerate(COLUMNS)}
+            row = {column: row_vars[col].get().strip() for col, column in enumerate(ROW_COLUMNS)}
+            if not row["tamanho"]:
+                del row["tamanho"]
             if include_empty or any(row.values()):
                 rows.append(row)
         return rows
+
+    def _sheet_rows_fields(self):
+        rows = self._rows()
+        fields = {"rows": rows}
+        if self.__dict__.get("sheet_size_format", False) or any(row.get("tamanho") for row in rows):
+            fields["formato_linhas"] = SIZE_ROW_FORMAT
+        return fields
 
     def _read_legacy_data(self):
         # Apenas migração: não atualizar, copiar nem apagar os arquivos antigos.
@@ -3002,7 +3039,7 @@ class LiveSalesApp(tk.Tk):
                 "elapsed_seconds": self.live_elapsed_seconds,
                 **self._profile_metadata(),
             },
-            "rows": self._rows(),
+            **self._sheet_rows_fields(),
         }
 
     def _save_rows(self, show_error=True):
@@ -3035,6 +3072,7 @@ class LiveSalesApp(tk.Tk):
         self.last_save_failed = not saved
         if saved:
             self.last_saved_sheet = data
+            self.sheet_size_format = data.get("formato_linhas") == SIZE_ROW_FORMAT
         elif show_error:
             messagebox.showerror(
                 "Alterações ainda não protegidas",
@@ -3053,6 +3091,7 @@ class LiveSalesApp(tk.Tk):
 
     def _restore_live_state(self, data):
         live = data.get("live", {}) if isinstance(data, dict) else {}
+        self.sheet_size_format = isinstance(data, dict) and data.get("formato_linhas") == SIZE_ROW_FORMAT
         perfil, template = self._saved_profile_metadata(data)
         self.live_profile = perfil
         self.live_message_template = template
@@ -3100,7 +3139,7 @@ class LiveSalesApp(tk.Tk):
             return False
 
         for row in rows:
-            values = [self._saved_row_value(row, col) for col in COLUMNS]
+            values = [self._saved_row_value(row, col) for col in ROW_COLUMNS]
             values[VALUE_COL] = self._format_money_input(values[VALUE_COL])
             self._add_row(values)
 
@@ -3276,7 +3315,7 @@ class LiveSalesApp(tk.Tk):
             "clients_count": stats["clients_count"],
             "clients": stats["clients"],
             "total": self._format_money(stats["total"]),
-            "rows": self._rows(),
+            **self._sheet_rows_fields(),
             **self._profile_metadata(),
         }
 
@@ -3724,6 +3763,7 @@ class LiveSalesApp(tk.Tk):
                 **{key: live[key] for key in ("perfil", "mensagem_cliente") if key in live},
             },
             "rows": rows,
+            **({"formato_linhas": live["formato_linhas"]} if "formato_linhas" in live else {}),
         }, history=live)
         if applied is False:
             return False
@@ -3793,7 +3833,7 @@ class LiveSalesApp(tk.Tk):
         tree.pack(fill="both", expand=True, padx=18, pady=18)
 
         headings = {"peca": "Peça", **HEADERS}
-        widths = {"peca": 65, "valor": 120, "codigo": 110, "cliente": 230, "suplente": 220, "tempo": 110}
+        widths = {"peca": 65, "valor": 120, "codigo": 110, "tamanho": 100, "cliente": 230, "suplente": 220}
         for column in columns:
             tree.heading(column, text=headings[column])
             tree.column(column, width=widths.get(column, 130), anchor="w")
@@ -3802,14 +3842,7 @@ class LiveSalesApp(tk.Tk):
             tree.insert(
                 "",
                 "end",
-                values=(
-                    index,
-                    self._saved_row_value(row, "valor"),
-                    self._saved_row_value(row, "codigo"),
-                    self._saved_row_value(row, "cliente"),
-                    self._saved_row_value(row, "suplente"),
-                    self._saved_row_value(row, "tempo"),
-                ),
+                values=(index, *(self._saved_row_value(row, column) for column in COLUMNS)),
             )
 
     def _format_history_datetime(self, value):
@@ -4596,9 +4629,12 @@ class LiveSalesApp(tk.Tk):
         wb = Workbook()
         sales = wb.active
         sales.title = "Vendas"
-        sales.append(["Peça"] + [HEADERS[col] for col in COLUMNS])
+        sales.append(["Peça"] + [HEADERS[col] for col in ROW_COLUMNS])
         for index, row in enumerate(rows, start=1):
-            sales.append([index] + [row[col] for col in COLUMNS])
+            sales.append([index] + [row.get(col, "") for col in ROW_COLUMNS])
+            size_cell = sales.cell(row=index + 1, column=SIZE_COL + 2)
+            size_cell.data_type = "s"
+            size_cell.number_format = "@"
 
         summary_sheet = wb.create_sheet("Resumo por cliente")
         summary_sheet.append(["Peça", "Cliente", "Código", "Tempo", "Valor", "Total da cliente"])
@@ -4686,6 +4722,7 @@ class LiveSalesApp(tk.Tk):
             )
 
         self._format_workbook(sales, summary_sheet, alternates_sheet, metadata_sheet, history_sheet)
+        sales.column_dimensions[get_column_letter(TIME_COL + 2)].hidden = True
         wb.save(path)
         self._save_rows()
         messagebox.showinfo("Exportação concluída", f"Planilha salva em:\n{path}")
@@ -4772,12 +4809,15 @@ class LiveSalesApp(tk.Tk):
 
     def _printable_rows_text(self, rows, title):
         now = datetime.now().strftime("%d/%m/%Y %H:%M")
+        unsold = title == "Peças não vendidas"
+        columns = ROW_COLUMNS if unsold else COLUMNS
         widths = {
             "check": 3,
             "peca": 4,
             "valor": 11,
             "codigo": 8,
-            "cliente": 20,
+            "tamanho": 8,
+            "cliente": 11 if unsold else 20,
             "suplente": 16,
             "tempo": 8,
         }
@@ -4786,15 +4826,8 @@ class LiveSalesApp(tk.Tk):
             text = self._clip_text(value, width)
             return text.rjust(width) if align == "right" else text.ljust(width)
 
-        header = (
-            f"{cell('', widths['check'])} "
-            f"{cell('Peça', widths['peca'])} "
-            f"{cell('Valor', widths['valor'])} "
-            f"{cell('Código', widths['codigo'])} "
-            f"{cell('Cliente', widths['cliente'])} "
-            f"{cell('Suplente', widths['suplente'])} "
-            f"{cell('Tempo', widths['tempo'])}"
-        )
+        header = " ".join((cell("", widths["check"]), cell("Peça", widths["peca"]),
+                           *(cell(HEADERS[col], widths[col]) for col in columns)))
         separator = "-" * len(header)
         lines = [
             f"{PROFILE_NAMES[self._current_profile()]} - {title}",
@@ -4804,15 +4837,9 @@ class LiveSalesApp(tk.Tk):
             separator,
         ]
         for index, row in enumerate(rows, start=1):
-            lines.append(
-                f"{cell(CHECKBOX_TEXT, widths['check'])} "
-                f"{cell(row.get('peca', index), widths['peca'], 'right')} "
-                f"{cell(row['valor'], widths['valor'])} "
-                f"{cell(row['codigo'], widths['codigo'])} "
-                f"{cell(row['cliente'], widths['cliente'])} "
-                f"{cell(row['suplente'], widths['suplente'])} "
-                f"{cell(row['tempo'], widths['tempo'])}"
-            )
+            lines.append(" ".join((cell(CHECKBOX_TEXT, widths["check"]),
+                                   cell(row.get("peca", index), widths["peca"], "right"),
+                                   *(cell(row.get(col, ""), widths[col]) for col in columns))))
         return "\n".join(lines) + "\n"
 
     def _send_text_to_printer(self, text, title):

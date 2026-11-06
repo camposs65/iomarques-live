@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app import CLIENT_COL, COLUMNS, SUPLENTE_COL, LiveSalesApp, Workbook
+from app import CLIENT_COL, ROW_COLUMNS, SIZE_COL, SUPLENTE_COL, TIME_COL, LiveSalesApp, Workbook
 from live_profiles import IO_MARQUES, MARQUES_BRECHO
 from test_profile_theme import ThemeStore
 
@@ -244,11 +244,12 @@ class CustomerPurchaseUiTests(unittest.TestCase):
     def test_counts_do_not_enter_rows_client_messages_or_excel(self):
         self.lives[0]["rows"] = [row("ana", str(index)) for index in range(74)]
         self.app._apply_cloud_data()
-        self.apply_rows([row("ana")])
+        sized_row = {**row("ana"), "tamanho": "=1+1"}
+        self.apply_rows([sized_row])
         self.assertEqual(self.badge().cget("text"), "75")
         rows = self.app._rows()
-        self.assertEqual(rows, [row("ana")])
-        self.assertEqual(set(rows[0]), set(COLUMNS))
+        self.assertEqual(rows, [sized_row])
+        self.assertEqual(set(rows[0]), set(ROW_COLUMNS))
         self.assertNotIn("75", self.app._client_messages_text())
         if Workbook is None:
             self.skipTest("openpyxl não está instalado")
@@ -259,7 +260,14 @@ class CustomerPurchaseUiTests(unittest.TestCase):
                 patch("app.messagebox.showinfo"):
             self.app.export_excel()
         save.assert_called_once_with("ficticio.xlsx")
-        self.assertEqual(workbook["Vendas"].max_column, len(COLUMNS) + 1)
+        sales = workbook["Vendas"]
+        self.assertEqual(sales.max_column, len(ROW_COLUMNS) + 1)
+        self.assertEqual(sales.cell(1, SIZE_COL + 2).value, "Tamanho")
+        self.assertEqual(sales.cell(2, SIZE_COL + 2).value, "=1+1")
+        self.assertEqual(sales.cell(2, SIZE_COL + 2).data_type, "s")
+        time_cell = sales.cell(2, TIME_COL + 2)
+        self.assertTrue(sales.column_dimensions[time_cell.column_letter].hidden)
+        self.assertEqual(time_cell.value, "00:00:03")
         self.assertEqual(workbook["Vendas"].cell(2, CLIENT_COL + 2).value, "ana")
         self.assertEqual(workbook["Resumo por cliente"].cell(2, 2).value, "ana")
 

@@ -112,6 +112,7 @@ class CloudLiveStore(SupabaseHistorySync):
         self._force_perfis = True
         self._perfis_revision = 0
         self._perfil_rpc_context = threading.local()
+        self._tamanho_pecas_generation = None
         self._generation = 0
         self._migration_done = self._read_migration_marker()
         self._read_outbox()
@@ -153,6 +154,24 @@ class CloudLiveStore(SupabaseHistorySync):
         with self.lock:
             return (not self.closed and not self._auth_blocked and self.is_authenticated
                     and set(self._perfis_live) == set(PROFILE_NAMES))
+
+    @property
+    def tamanho_pecas_disponivel(self):
+        with self.lock:
+            return (self._tamanho_pecas_generation == self._generation and not self.closed
+                    and not self._auth_blocked and self.is_authenticated)
+
+    def _refresh_tamanho_pecas(self, generation):
+        try:
+            enabled = self._rpc_perfil_live("tamanho_pecas_live_disponivel", {}, generation) is True
+        except SyncError:
+            return
+        if enabled:
+            with self.lock:
+                if generation != self._generation or self.closed:
+                    return
+                self._tamanho_pecas_generation = generation
+            self._notify_data()
 
     @property
     def erro_perfis(self):
@@ -1170,6 +1189,11 @@ class CloudLiveStore(SupabaseHistorySync):
             self._finish_migration_if_confirmed()
             if perfis_due:
                 self._refresh_perfis_live(generation)
+                with self.lock:
+                    if generation != self._generation or self.closed:
+                        return
+            if refresh and not self.tamanho_pecas_disponivel:
+                self._refresh_tamanho_pecas(generation)
                 with self.lock:
                     if generation != self._generation or self.closed:
                         return

@@ -48,6 +48,8 @@ class CloudProfilesTests(unittest.TestCase):
 
     def rpc(self, name, arguments):
         self.calls.append((name, copy.deepcopy(arguments)))
+        if name == "tamanho_pecas_live_disponivel":
+            return False
         if name == "listar_versoes_lives":
             return []
         if name == "listar_perfis_live_app":

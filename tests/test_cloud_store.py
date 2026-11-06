@@ -54,9 +54,12 @@ class FakeCloud:
         self.calls = []
         self.before_save = None
         self.after_save = None
+        self.size_feature = False
 
     def rpc(self, name, arguments):
         self.calls.append((name, copy.deepcopy(arguments)))
+        if name == "tamanho_pecas_live_disponivel":
+            return self.size_feature
         if name == "listar_perfis_live_app":
             return [{"perfil": key, "mensagem_cliente": value, "versao": 1}
                     for key, value in DEFAULT_MESSAGES.items()]
@@ -127,6 +130,34 @@ class CloudStoreTests(unittest.TestCase):
                            "access_token": "test", "expires_at": time.time() + 3600}
         self.addCleanup(manager.shutdown)
         return manager
+
+    def test_size_support_is_confirmed_per_account_without_blocking_legacy_sync(self):
+        original = self.manager._rpc
+
+        def old_schema(name, arguments):
+            if name == "tamanho_pecas_live_disponivel":
+                raise SyncTemporaryError("RPC ainda não existe")
+            return original(name, arguments)
+
+        self.manager._rpc = old_schema
+        self.assertTrue(self.manager.queue_state(state()))
+        self.manager._flush()
+        self.assertEqual(self.manager.status, "synced")
+        self.assertFalse(self.manager.tamanho_pecas_disponivel)
+        self.assertFalse(self.manager.has_pending)
+        self.assertEqual(self.cloud.rows["live_test"]["documento"]["estado"], state())
+
+        self.manager._rpc = original
+        self.cloud.size_feature = True
+        self.manager.sync_now()
+        self.manager._flush()
+        self.assertTrue(self.manager.tamanho_pecas_disponivel)
+        previous_generation = self.manager.contexto_autenticacao
+        self.manager.logout()
+        self.assertFalse(self.manager.tamanho_pecas_disponivel)
+        with patch.object(self.manager, "_rpc_perfil_live", return_value=True):
+            self.manager._refresh_tamanho_pecas(previous_generation)
+        self.assertFalse(self.manager.tamanho_pecas_disponivel)
 
     def test_queues_complete_data_encrypted_without_plaintext_files(self):
         data = state()
