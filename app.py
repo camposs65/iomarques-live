@@ -45,7 +45,7 @@ except ImportError:
 from roguelike_game import RogueBrechoGame
 
 
-APP_VERSION = "1.9.5"
+APP_VERSION = "1.9.6"
 
 COLUMNS = ("valor", "codigo", "tamanho", "cliente", "suplente")
 ROW_COLUMNS = (*COLUMNS, "tempo")
@@ -57,7 +57,8 @@ HEADERS = {
     "suplente": "Suplente",
     "tempo": "Tempo",
 }
-COLUMN_WIDTHS = (130, 110, 84, 250, 250)
+COLUMN_WIDTHS = (118, 106, 108, 202, 202)
+TABLE_COLUMN_WEIGHTS = (0, 1, 1, 0, 2, 2)
 INDEX_COLUMN_WIDTH = 68
 MAX_SIZE_LENGTH = 100
 SIZE_ROW_FORMAT = 2
@@ -713,11 +714,11 @@ class LiveSalesApp(tk.Tk):
         for entries in self.cell_entries:
             for col, entry in enumerate(entries):
                 entry.configure(state="normal" if editable and (col != SIZE_COL or size_available) else "disabled")
-        if "sheet_hint" in self.__dict__:
-            hint = "O tempo é salvo ao preencher Valor ou Código durante a live."
+        if "size_notice" in self.__dict__:
             if editable and not size_available:
-                hint += " Tamanho aguarda atualização do banco."
-            self.sheet_hint.configure(text=hint)
+                self.size_notice.pack(side="right", before=self.size_header_label, padx=(0, 2), pady=6)
+            else:
+                self.size_notice.pack_forget()
         for button in self.time_check_buttons:
             button.configure(state="normal" if editable else "disabled")
         for buttons in self.clear_buttons:
@@ -729,6 +730,11 @@ class LiveSalesApp(tk.Tk):
 
     def _size_column_available(self):
         return getattr(self.sync_manager, "tamanho_pecas_disponivel", False) is True
+
+    def _open_size_sync_if_blocked(self, event):
+        if str(event.widget.cget("state")) == "disabled" and not self._size_column_available():
+            self.open_sync_dialog()
+            return "break"
 
     def _sheet_is_pristine(self):
         return (not self.__dict__.get("sheet_load_error", False)
@@ -875,13 +881,17 @@ class LiveSalesApp(tk.Tk):
 
         body = tk.Frame(window, bg=self.colors["app_bg"])
         body.pack(fill="both", expand=True, padx=24, pady=20)
+        description = (
+            "A live atual e o histórico completo ficam no Supabase, incluindo "
+            "peças, clientes e suplentes. Se a conexão cair, somente as alterações "
+            "pendentes ficam protegidas neste computador até o banco confirmar."
+        )
+        if self.sync_manager and self.sync_manager.ready and not self._size_column_available():
+            description += ("\n\nTamanho: falta confirmar a atualização do banco. "
+                            "Depois de aplicar o SQL, use Sincronizar agora.")
         tk.Label(
             body,
-            text=(
-                "A live atual e o histórico completo ficam no Supabase, incluindo "
-                "peças, clientes e suplentes. Se a conexão cair, somente as alterações "
-                "pendentes ficam protegidas neste computador até o banco confirmar."
-            ),
+            text=description,
             bg=self.colors["app_bg"],
             fg=self.colors["text"],
             justify="left",
@@ -1241,31 +1251,23 @@ class LiveSalesApp(tk.Tk):
 
         self.table_shell = tk.Frame(self, bg=self.colors["grid"], bd=1)
         self.table_shell.pack(fill="both", expand=True, padx=24, pady=(0, 14))
+        self.table_shell.grid_columnconfigure(0, weight=1)
+        self.table_shell.grid_rowconfigure(1, weight=1)
 
-        header_shell = tk.Frame(self.table_shell, bg=self.colors["grid"])
-        header_shell.pack(fill="x")
-
-        self.header_frame = tk.Frame(header_shell, bg=self.colors["grid"])
-        self.header_frame.pack(side="left", fill="x", expand=True)
-        self.header_spacer = tk.Frame(header_shell, bg=self.colors["grid"], width=17)
-        self.header_spacer.pack(side="right", fill="y")
-        self.header_spacer.pack_propagate(False)
+        self.header_frame = tk.Frame(self.table_shell, bg=self.colors["grid"])
+        self.header_frame.grid(row=0, column=0, sticky="ew")
         self._build_table_header()
 
-        body_shell = tk.Frame(self.table_shell, bg=self.colors["grid"])
-        body_shell.pack(fill="both", expand=True)
-
         self.canvas = tk.Canvas(
-            body_shell,
+            self.table_shell,
             bg=self.colors["table_bg"],
             highlightthickness=0,
             borderwidth=0,
         )
-        self.canvas.pack(side="left", fill="both", expand=True)
+        self.canvas.grid(row=1, column=0, sticky="nsew")
 
-        scroll = ttk.Scrollbar(body_shell, orient="vertical", command=self.canvas.yview)
-        scroll.pack(side="right", fill="y")
-        self.header_spacer.configure(width=scroll.winfo_reqwidth())
+        scroll = ttk.Scrollbar(self.table_shell, orient="vertical", command=self.canvas.yview)
+        scroll.grid(row=1, column=1, sticky="ns")
         self.canvas.configure(yscrollcommand=scroll.set)
 
         self.body_frame = tk.Frame(self.canvas, bg=self.colors["grid"])
@@ -1278,7 +1280,7 @@ class LiveSalesApp(tk.Tk):
         footer = tk.Frame(self, bg=self.colors["app_bg"])
         footer.pack(fill="x", padx=24, pady=(0, 14))
 
-        self.sheet_hint = tk.Label(
+        footer_hint = tk.Label(
             footer,
             text=(
                 "O tempo é salvo ao preencher Valor ou Código durante a live."
@@ -1288,7 +1290,7 @@ class LiveSalesApp(tk.Tk):
             font=("Segoe UI", 10),
             anchor="w",
         )
-        self.sheet_hint.pack(side="left", fill="x", expand=True)
+        footer_hint.pack(side="left", fill="x", expand=True)
 
         tk.Label(
             footer,
@@ -2145,8 +2147,7 @@ class LiveSalesApp(tk.Tk):
             highlightthickness=1,
         )
         index_cell.grid(row=0, column=0, sticky="nsew")
-        self.header_frame.grid_columnconfigure(0, weight=0, minsize=INDEX_COLUMN_WIDTH)
-        tk.Label(
+        index_label = tk.Label(
             index_cell,
             text="Peça",
             bg=self.colors["table_header"],
@@ -2155,7 +2156,10 @@ class LiveSalesApp(tk.Tk):
             anchor="center",
             padx=6,
             pady=9,
-        ).pack(fill="both", expand=True)
+        )
+        index_label.pack(fill="both", expand=True)
+        self._fix_sheet_cell_height(index_cell, index_label.winfo_reqheight())
+        minimums = [max(INDEX_COLUMN_WIDTH, index_label.winfo_reqwidth() + 2)]
 
         for col, header in enumerate(HEADERS[column] for column in COLUMNS):
             cell = tk.Frame(
@@ -2165,7 +2169,6 @@ class LiveSalesApp(tk.Tk):
                 highlightthickness=1,
             )
             cell.grid(row=0, column=col + 1, sticky="nsew")
-            self.header_frame.grid_columnconfigure(col + 1, weight=1, minsize=COLUMN_WIDTHS[col])
 
             label = tk.Label(
                 cell,
@@ -2177,8 +2180,6 @@ class LiveSalesApp(tk.Tk):
                 padx=10,
                 pady=9,
             )
-            label.pack(side="left", fill="both", expand=True)
-
             filter_button = tk.Button(
                 cell,
                 text="▼",
@@ -2197,13 +2198,48 @@ class LiveSalesApp(tk.Tk):
                 takefocus=False,
             )
             filter_button.pack(side="right", padx=(0, 4), pady=6)
+            label.pack(side="left", fill="both", expand=True)
             self.filter_buttons.append(filter_button)
+            required_width = label.winfo_reqwidth() + filter_button.winfo_reqwidth() + 6
+            required_height = max(label.winfo_reqheight(), filter_button.winfo_reqheight() + 12)
+            if col == SIZE_COL:
+                self.size_header_label = label
+                self.size_notice = tk.Button(
+                    cell, text="!", width=1, command=self.open_sync_dialog,
+                    bg=self.colors["warning_bg"], fg=self.colors["warning_text"],
+                    activebackground=self.colors["secondary"], activeforeground=self.colors["warning_text"],
+                    relief="flat", bd=0, padx=4, pady=0, cursor="hand2",
+                    font=("Segoe UI Semibold", 9),
+                )
+                required_width += self.size_notice.winfo_reqwidth() + 2
+                required_height = max(required_height, self.size_notice.winfo_reqheight() + 12)
+            self._fix_sheet_cell_height(cell, required_height)
+            minimums.append(max(COLUMN_WIDTHS[col], required_width))
+        self.table_column_minimums = tuple(minimums)
+
+    @staticmethod
+    def _fix_sheet_cell_height(cell, height):
+        cell.configure(width=1, height=height + 2 * int(cell.cget("highlightthickness")))
+        cell.pack_propagate(False)
 
     def _on_body_configure(self, _event=None):
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_canvas_configure(self, event):
         self.canvas.itemconfigure(self.body_window, width=event.width)
+        minimums = self.table_column_minimums
+        if event.width < len(minimums):
+            return
+        extra = event.width - sum(minimums)
+        weights = TABLE_COLUMN_WEIGHTS if extra >= 0 else minimums
+        total_weight = sum(weights)
+        used_weight = 0
+        for col, (minimum, weight) in enumerate(zip(minimums, weights)):
+            used_extra = extra * used_weight // total_weight
+            used_weight += weight
+            width = minimum + extra * used_weight // total_weight - used_extra
+            for frame in (self.header_frame, self.body_frame):
+                frame.grid_columnconfigure(col, weight=0, minsize=width)
 
     def _on_mousewheel(self, event):
         if not self.canvas.winfo_ismapped() or not self._pointer_inside_widget(self.canvas):
@@ -2485,7 +2521,6 @@ class LiveSalesApp(tk.Tk):
         row_buttons = []
         customer_count = None
 
-        self.body_frame.grid_columnconfigure(0, weight=0, minsize=INDEX_COLUMN_WIDTH)
         index_cell = tk.Frame(
             self.body_frame,
             bg=self.colors["table_header"],
@@ -2523,10 +2558,9 @@ class LiveSalesApp(tk.Tk):
             pady=7,
         )
         index_label.pack(side="left", fill="both", expand=True)
+        self._fix_sheet_cell_height(index_cell, max(index_label.winfo_reqheight(), time_check.winfo_reqheight()))
 
         for col in range(len(COLUMNS)):
-            self.body_frame.grid_columnconfigure(col + 1, weight=1, minsize=COLUMN_WIDTHS[col])
-
             cell = tk.Frame(
                 self.body_frame,
                 bg=self.colors["table_bg"],
@@ -2549,10 +2583,12 @@ class LiveSalesApp(tk.Tk):
                 font=("Segoe UI", 11),
             )
             entry.pack(side="left", fill="both", expand=True, padx=(10, 4), pady=7)
+            self._fix_sheet_cell_height(cell, entry.winfo_reqheight() + 14)
 
             if col == SIZE_COL:
                 entry.configure(validate="key", validatecommand=self.validate_size,
                                 state="normal" if self._size_column_available() else "disabled")
+                entry.bind("<Button-1>", self._open_size_sync_if_blocked)
 
             if col == CLIENT_COL:
                 customer_count = tk.Label(cell, text="", bg=self.colors["table_bg"],

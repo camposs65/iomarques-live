@@ -117,6 +117,12 @@ class CloudUiTests(unittest.TestCase):
         self.assertEqual(len(self.app.cell_entries[0]), len(COLUMNS))
         self.assertFalse(self.app._cell_exists(0, TIME_COL))
         self.assertEqual(self.app.cell_entries[0][SIZE_COL].cget("state"), "disabled")
+        self.assertEqual(self.app.size_notice.winfo_manager(), "pack")
+        self.assertEqual(self.app.cell_entries[0][CODE_COL].cget("state"), "normal")
+        event = SimpleNamespace(widget=self.app.cell_entries[0][SIZE_COL])
+        with patch.object(self.app, "open_sync_dialog") as dialog:
+            self.assertEqual(self.app._open_size_sync_if_blocked(event), "break")
+            dialog.assert_called_once()
         self.fill_row()
         self.assertTrue(self.app._save_rows())
         self.assertEqual(self.store.saved[-1][0]["rows"], [ROW])
@@ -128,6 +134,10 @@ class CloudUiTests(unittest.TestCase):
         self.app._apply_cloud_data()
         size_entry = self.app.cell_entries[0][SIZE_COL]
         self.assertEqual(size_entry.cget("state"), "normal")
+        self.assertEqual(self.app.size_notice.winfo_manager(), "")
+        with patch.object(self.app, "open_sync_dialog") as dialog:
+            self.assertIsNone(self.app._open_size_sync_if_blocked(event))
+            dialog.assert_not_called()
         size_entry.insert(0, "X" * 101)
         self.assertEqual(size_entry.get(), "")
         with patch.object(self.app, "_focus_cell") as focus:
@@ -136,6 +146,27 @@ class CloudUiTests(unittest.TestCase):
             self.app._move_focus_right(0, SUPLENTE_COL)
             self.assertEqual([call.args for call in focus.call_args_list], [(0, SIZE_COL), (0, CLIENT_COL), (1, 0)])
         self.assertEqual(len(self.store.saved), 1)
+
+    def test_header_and_sheet_keep_identical_column_edges_when_resized_and_filtered(self):
+        self.fill_row()
+        self.app._ensure_blank_row()
+        self.app.deiconify()
+        self.app.filter_buttons[SIZE_COL].configure(font=("Segoe UI", 18))
+        self.app.filter_vars[CODE_COL].set(ROW["codigo"])
+        self.app._apply_filters()
+        for width in (960, 1434, 1160):
+            with self.subTest(width=width):
+                self.app.geometry(f"{width}x580")
+                self.app.update()
+                self.assertTrue(self.app.size_notice.winfo_ismapped())
+                cells = (self.app.index_frames[0], *self.app.cell_frames[0])
+                for column, body in enumerate(cells):
+                    header = self.app.header_frame.grid_slaves(row=0, column=column)[0]
+                    self.assertEqual(header.winfo_rootx(), body.winfo_rootx())
+                    self.assertEqual(header.winfo_width(), body.winfo_width())
+                self.assertEqual(self.app.header_frame.winfo_width(), self.app.canvas.winfo_width())
+                self.assertEqual(sum(cell.winfo_width() for cell in cells), self.app.canvas.winfo_width())
+        self.app.withdraw()
 
     @patch("app.messagebox.askyesno", return_value=True)
     def test_size_and_hidden_time_reach_history_and_recorder_projection(self, _confirm):
