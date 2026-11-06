@@ -45,7 +45,7 @@ except ImportError:
 from roguelike_game import RogueBrechoGame
 
 
-APP_VERSION = "1.9.6"
+APP_VERSION = "1.9.7"
 
 COLUMNS = ("valor", "codigo", "tamanho", "cliente", "suplente")
 ROW_COLUMNS = (*COLUMNS, "tempo")
@@ -109,7 +109,7 @@ COLORS = {
     "table_header": "#F3F3F3",
     "table_header_text": "#2C1040",
     "grid": "#D7D0D7",
-    "sold_row": "#EAF7EA",
+    "sold_row": "#D5EFD7",
     "active_border": "#7B3F7A",
     "timer_bg": "#FFFFFF",
     "warning_bg": "#FFF1D6",
@@ -2651,6 +2651,7 @@ class LiveSalesApp(tk.Tk):
         self.cell_entries.append(row_entries)
         self.clear_buttons.append(row_buttons)
         self.customer_count_labels.append(customer_count)
+        row_vars[CLIENT_COL].trace_add("write", lambda *_args, r=row_index: self._refresh_row_style(r))
         self._refresh_row_style(row_index)
         self._on_body_configure()
         if hasattr(self, "filter_vars") and any(var.get().strip() for var in self.filter_vars):
@@ -2878,7 +2879,9 @@ class LiveSalesApp(tk.Tk):
             entry = self.cell_entries[row][col]
             cell_bg = self.colors["duplicate_cell"] if col == CODE_COL and self._is_duplicate_code_row(row) else bg
             cell.configure(bg=cell_bg)
-            entry.configure(bg=cell_bg, fg=self.colors["text"])
+            disabled_bg = cell_bg if bg == self.colors["sold_row"] else self.colors["table_header"]
+            entry.configure(bg=cell_bg, fg=self.colors["text"],
+                            disabledbackground=disabled_bg, readonlybackground=cell_bg)
             button = self.clear_buttons[row][col]
             if button is not None:
                 button.configure(bg=bg)
@@ -4043,6 +4046,7 @@ class LiveSalesApp(tk.Tk):
             grouped[cliente].append(
                 {
                     "codigo": row["codigo"],
+                    "tamanho": row.get("tamanho", ""),
                     "tempo": row["tempo"],
                     "valor_texto": row["valor"],
                     "valor": valor,
@@ -4084,11 +4088,13 @@ class LiveSalesApp(tk.Tk):
             item_lines = []
             for item in items:
                 codigo = item["codigo"] or "sem código"
+                tamanho = item.get("tamanho", "")
+                tamanho_texto = f" - Tam. {tamanho}" if tamanho else ""
                 tempo = item["tempo"] or "-"
                 valor = self._format_money(item["valor"])
                 suplente = sale_customer_name(item.get("suplente"))
                 suplente_text = f"   sup: {suplente}" if suplente else ""
-                item_lines.append(f"{CHECKBOX_TEXT} {codigo} - {tempo} - {valor}{suplente_text}")
+                item_lines.append(f"{CHECKBOX_TEXT} {codigo}{tamanho_texto} - {tempo} - {valor}{suplente_text}")
             sections.append(
                 {
                     "cliente": cliente,
@@ -4668,12 +4674,9 @@ class LiveSalesApp(tk.Tk):
         sales.append(["Peça"] + [HEADERS[col] for col in ROW_COLUMNS])
         for index, row in enumerate(rows, start=1):
             sales.append([index] + [row.get(col, "") for col in ROW_COLUMNS])
-            size_cell = sales.cell(row=index + 1, column=SIZE_COL + 2)
-            size_cell.data_type = "s"
-            size_cell.number_format = "@"
 
         summary_sheet = wb.create_sheet("Resumo por cliente")
-        summary_sheet.append(["Peça", "Cliente", "Código", "Tempo", "Valor", "Total da cliente"])
+        summary_sheet.append(["Peça", "Cliente", "Código", "Tamanho", "Tempo", "Valor", "Total da cliente"])
         summary = self._summary()
         stats = self._current_live_stats()
         piece_index = 1
@@ -4686,6 +4689,7 @@ class LiveSalesApp(tk.Tk):
                         piece_index,
                         cliente if first_row else "",
                         item["codigo"],
+                        item["tamanho"],
                         item["tempo"],
                         float(item["valor"]),
                         float(subtotal) if first_row else "",
@@ -4694,16 +4698,17 @@ class LiveSalesApp(tk.Tk):
                 piece_index += 1
                 first_row = False
         summary_sheet.append([])
-        summary_sheet.append(["", "TOTAL GERAL", "", "", "", float(stats["total"])])
+        summary_sheet.append(["", "TOTAL GERAL", "", "", "", "", float(stats["total"])])
 
         alternates_sheet = wb.create_sheet("Suplentes")
-        alternates_sheet.append(["Peça", "Suplente", "Código", "Tempo", "Valor", "Cliente titular"])
+        alternates_sheet.append(["Peça", "Suplente", "Código", "Tamanho", "Tempo", "Valor", "Cliente titular"])
         for index, row in enumerate((row for row in rows if row["suplente"].strip()), start=1):
             alternates_sheet.append(
                 [
                     index,
                     row["suplente"],
                     row["codigo"],
+                    row.get("tamanho", ""),
                     row["tempo"],
                     float(self._parse_money(row["valor"])),
                     sale_customer_name(row["cliente"]),
@@ -4780,6 +4785,11 @@ class LiveSalesApp(tk.Tk):
                     cell.font = text_font
 
             for column_cells in sheet.columns:
+                if column_cells[0].value == HEADERS["tamanho"]:
+                    for cell in column_cells[1:]:
+                        if isinstance(cell.value, str):
+                            cell.data_type = "s"
+                            cell.number_format = "@"
                 length = max(len(str(cell.value or "")) for cell in column_cells)
                 sheet.column_dimensions[get_column_letter(column_cells[0].column)].width = min(max(length + 3, 14), 34)
 
@@ -4794,11 +4804,11 @@ class LiveSalesApp(tk.Tk):
                     sheets[0].cell(row=row, column=col).fill = sold_fill
 
         for row in range(2, sheets[1].max_row + 1):
-            sheets[1].cell(row=row, column=5).number_format = '"R$" #,##0.00'
             sheets[1].cell(row=row, column=6).number_format = '"R$" #,##0.00'
+            sheets[1].cell(row=row, column=7).number_format = '"R$" #,##0.00'
 
         for row in range(2, sheets[2].max_row + 1):
-            sheets[2].cell(row=row, column=5).number_format = '"R$" #,##0.00'
+            sheets[2].cell(row=row, column=6).number_format = '"R$" #,##0.00'
 
     def print_sheet(self, show_success=True, show_empty=True):
         self._finish_active_cell()

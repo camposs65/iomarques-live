@@ -168,6 +168,33 @@ class CloudUiTests(unittest.TestCase):
                 self.assertEqual(sum(cell.winfo_width() for cell in cells), self.app.canvas.winfo_width())
         self.app.withdraw()
 
+    def test_sold_color_updates_on_customer_change_without_keyboard_or_new_save(self):
+        self.fill_row()
+        self.store.tamanho_pecas_disponivel = True
+        self.app._apply_cloud_data()
+        customer = self.app.row_vars[0][CLIENT_COL]
+        sold = self.app.colors["sold_row"]
+
+        customer.set("cliente_teste")
+        for frame, entry in zip(self.app.cell_frames[0], self.app.cell_entries[0]):
+            self.assertEqual(frame.cget("background"), sold)
+            self.assertEqual(entry.cget("background"), sold)
+        self.app._apply_sync_status("synced", "Salvo", "teste")
+        self.assertEqual(self.app.cell_entries[0][CLIENT_COL].cget("background"), sold)
+
+        self.store.ready = False
+        self.app._refresh_cloud_editability()
+        for entry in self.app.cell_entries[0]:
+            self.assertEqual(entry.cget("state"), "disabled")
+            self.assertEqual(entry.cget("disabledbackground"), sold)
+
+        for name in (".", ""):
+            customer.set(name)
+            self.assertEqual(self.app.cell_frames[0][CLIENT_COL].cget("background"), self.app.colors["table_bg"])
+            self.assertEqual(self.app.cell_entries[0][CLIENT_COL].cget("disabledbackground"),
+                             self.app.colors["table_header"])
+        self.assertEqual(self.store.saved, [])
+
     @patch("app.messagebox.askyesno", return_value=True)
     def test_size_and_hidden_time_reach_history_and_recorder_projection(self, _confirm):
         self.store.tamanho_pecas_disponivel = True

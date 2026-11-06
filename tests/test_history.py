@@ -74,8 +74,8 @@ class HistoryMonthTests(unittest.TestCase):
     def test_excel_history_uses_same_commission_and_preserves_sales_total(self):
         self.app._finish_active_cell = Mock()
         rows = [{
-            "valor": "1.000,00", "codigo": "001", "cliente": "Teste",
-            "suplente": "", "tempo": "00:01:00",
+            "valor": "1.000,00", "codigo": "001", "tamanho": "038", "cliente": "Teste",
+            "suplente": "Reserva", "tempo": "00:01:00",
         }, {
             "valor": "59,90", "codigo": "014", "tamanho": "44", "cliente": ".",
             "suplente": "", "tempo": "00:01:30",
@@ -107,9 +107,21 @@ class HistoryMonthTests(unittest.TestCase):
                 self.assertEqual(history["I2"].value, "Teste")
                 summary = workbook["Resumo por cliente"]
                 self.assertEqual(summary["B2"].value, "Teste")
+                self.assertEqual(summary["D1"].value, "Tamanho")
+                self.assertEqual(summary["D2"].value, "038")
+                self.assertEqual(summary["D2"].data_type, "s")
+                self.assertEqual(summary["E2"].value, "00:01:00")
                 self.assertEqual(summary["F2"].value, 1000)
+                self.assertEqual(summary["G2"].value, 1000)
+                self.assertEqual(summary["G2"].number_format, '"R$" #,##0.00')
                 self.assertEqual(summary["B4"].value, "TOTAL GERAL")
-                self.assertEqual(summary["F4"].value, 1059.90)
+                self.assertEqual(summary["G4"].value, 1059.90)
+                alternates = workbook["Suplentes"]
+                self.assertEqual(alternates["D1"].value, "Tamanho")
+                self.assertEqual(alternates["D2"].value, "038")
+                self.assertEqual(alternates["E2"].value, "00:01:00")
+                self.assertEqual(alternates["F2"].value, 1000)
+                self.assertEqual(alternates["F2"].number_format, '"R$" #,##0.00')
                 sales = workbook["Vendas"]
                 self.assertEqual(sales["D3"].value, "44")
                 self.assertEqual(sales["E3"].value, ".")

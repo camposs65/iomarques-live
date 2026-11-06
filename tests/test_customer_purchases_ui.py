@@ -244,7 +244,7 @@ class CustomerPurchaseUiTests(unittest.TestCase):
     def test_counts_do_not_enter_rows_client_messages_or_excel(self):
         self.lives[0]["rows"] = [row("ana", str(index)) for index in range(74)]
         self.app._apply_cloud_data()
-        sized_row = {**row("ana"), "tamanho": "=1+1"}
+        sized_row = {**row("ana", alternate="reserva"), "tamanho": "=1+1"}
         self.apply_rows([sized_row])
         self.assertEqual(self.badge().cget("text"), "75")
         rows = self.app._rows()
@@ -270,6 +270,10 @@ class CustomerPurchaseUiTests(unittest.TestCase):
         self.assertEqual(time_cell.value, "00:00:03")
         self.assertEqual(workbook["Vendas"].cell(2, CLIENT_COL + 2).value, "ana")
         self.assertEqual(workbook["Resumo por cliente"].cell(2, 2).value, "ana")
+        for sheet_name in ("Resumo por cliente", "Suplentes"):
+            size_cell = workbook[sheet_name]["D2"]
+            self.assertEqual(size_cell.value, "=1+1")
+            self.assertEqual(size_cell.data_type, "s")
 
     def test_minimum_window_keeps_counter_entry_and_clear_button_separate(self):
         self.lives[0]["rows"] = [row("nome_muito_longo_da_cliente", str(index)) for index in range(150)]

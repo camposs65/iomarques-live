@@ -81,6 +81,24 @@ class UnsoldPrintingTests(unittest.TestCase):
         self.assertIn("P/M", unsold)
         self.assertIn("00:01:23", unsold)
 
+    def test_summary_shows_size_per_piece_without_changing_messages_or_totals(self):
+        rows = [
+            {"codigo": "024", "tamanho": "P/M", "cliente": "Teste", "valor": "20,00", "tempo": "00:01:23"},
+            {"codigo": "543", "cliente": "Teste", "valor": "25,90", "tempo": "00:02:00"},
+        ]
+        self.set_rows(rows)
+        widget = Mock()
+        self.app._insert_summary_text(widget)
+        screen = "".join(call.args[1] for call in widget.insert.call_args_list)
+        for summary in (screen, self.app._summary_text(), self.app._printable_report()):
+            self.assertIn("024 - Tam. P/M - 00:01:23 - R$ 20,00", summary)
+            self.assertIn("543 - 00:02:00 - R$ 25,90", summary)
+            self.assertIn("Peças vendidas: 2", summary)
+            self.assertIn("Total vendido: R$ 45,90", summary)
+        with_size = self.app._client_messages()
+        self.set_rows([{key: value for key, value in row.items() if key != "tamanho"} for row in rows])
+        self.assertEqual(self.app._client_messages(), with_size)
+
     @patch("app.messagebox.showinfo")
     def test_print_all_keeps_original_indices_in_unsold_report(self, _showinfo):
         self.set_rows(self.example_rows())

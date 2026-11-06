@@ -1,4 +1,4 @@
-# IoMarques Brechó — Controle de Vendas da Live · v1.9.6
+# IoMarques Brechó — Controle de Vendas da Live · v1.9.7
 
 Aplicativo para Windows usado para anotar as peças durante as lives no Instagram. O Supabase guarda a live em andamento e o histórico completo; a instalação prepara o programa e cria o atalho na Área de Trabalho.
 
@@ -89,7 +89,7 @@ Execute uma vez a migration `supabase/migrations/20261106000100_tamanho_pecas_li
 
 Enquanto Tamanho estiver bloqueado, o cabeçalho mostra um `!`. Clique no aviso ou no campo cinza para abrir os dados do Supabase. Depois de aplicar a migration, use **Sincronizar agora** para liberar a edição, sem reinstalar o app.
 
-Tamanho aparece na planilha, no histórico detalhado e na aba Vendas do Excel. Nessa aba, Tempo continua disponível como coluna oculta. Os horários armazenados continuam sendo enviados para os recortes.
+Tamanho aparece na planilha, no histórico detalhado, no Resumo final e na impressão do resumo. No Excel, consta nas abas Vendas, Resumo por cliente e Suplentes. Na aba Vendas, Tempo continua disponível como coluna oculta. Os horários armazenados continuam sendo enviados para os recortes.
 
 ### Perfil e mensagem do Marques Brechó
 
