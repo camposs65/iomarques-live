@@ -37,6 +37,22 @@ class UnsoldPrintingTests(unittest.TestCase):
         self.assertTrue(self.app.print_unsold_pieces(show_success=False))
         self.assertEqual(self.printed_indices(), [3, 5, 10])
 
+    def test_dot_customer_is_unsold_but_its_value_appears_in_every_summary(self):
+        self.set_rows([{}, {"codigo": "014", "valor": "R$ 59,90", "cliente": " . "}])
+
+        self.assertTrue(self.app.print_unsold_pieces(show_success=False))
+        self.assertEqual(self.printed_indices(), [2])
+        self.assertEqual(self.app._client_messages(), [])
+        widget = Mock()
+        self.app._insert_summary_text(widget)
+        screen_summary = "".join(call.args[1] for call in widget.insert.call_args_list)
+        for summary in (self.app._summary_text(), self.app._printable_report(), screen_summary):
+            with self.subTest(summary=summary):
+                self.assertIn("Total vendido: R$ 59,90", summary)
+                self.assertIn("Peças vendidas: 0", summary)
+                self.assertIn("Clientes: 0", summary)
+                self.assertNotIn("014", summary)
+
     def test_identical_pieces_keep_their_own_row_numbers(self):
         piece = {"valor": "R$ 25,00", "codigo": "222"}
         self.set_rows([{"cliente": "Vendida"}, piece, {}, piece.copy()])

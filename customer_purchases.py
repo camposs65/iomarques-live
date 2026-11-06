@@ -4,6 +4,9 @@ from collections import Counter
 from dataclasses import dataclass
 
 
+UNSOLD_CUSTOMER_MARKER = "."
+
+
 @dataclass(frozen=True)
 class PurchaseHistory:
     totals: Counter[str]
@@ -11,10 +14,20 @@ class PurchaseHistory:
     incomplete: bool
 
 
+def sale_customer_name(value):
+    name = value.strip() if isinstance(value, str) else ""
+    return "" if name == UNSOLD_CUSTOMER_MARKER else name
+
+
+def correct_legacy_sold_count(saved_count, named_customers):
+    # Older summaries counted every filled customer cell as a sale.
+    if type(saved_count) is int and saved_count == len(named_customers):
+        return saved_count - named_customers.count(UNSOLD_CUSTOMER_MARKER)
+    return saved_count
+
+
 def normalize_customer(value):
-    if not isinstance(value, str):
-        return ""
-    return value.strip().lstrip("@").strip().casefold()
+    return sale_customer_name(value).lstrip("@").strip().casefold()
 
 
 def count_customer_rows(rows):

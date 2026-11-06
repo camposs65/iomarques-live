@@ -417,8 +417,16 @@ class CloudLiveStore(SupabaseHistorySync):
                         or item["versao_esperada"] < 0):
                     raise ValueError("Invalid operation")
                 uuid.UUID(item["operacao_id"])
-                if item.get("enviado") is not None:
-                    self._validate_document(key, item["enviado"])
+                sent = item.get("enviado")
+                if sent is not None:
+                    self._validate_document(key, sent)
+                if "resumo_enviado" in item:
+                    summary = item["resumo_enviado"]
+                    if (item["tipo"] != "save" or sent is None
+                            or (sent["historico"] is None and summary is not None)
+                            or (sent["historico"] is not None
+                                and (not isinstance(summary, dict) or summary.get("id") != key))):
+                        raise ValueError("Invalid sent summary")
             self._pending = value["pending"]
             self._legacy_ids = set(value.get("legacy_ids", []))
             self._legacy_resolved = set(value.get("legacy_resolved", []))
@@ -1037,13 +1045,17 @@ class CloudLiveStore(SupabaseHistorySync):
             else:
                 if entry["tipo"] == "save" and entry["enviado"] is None:
                     pending = _clone(self._pending)
-                    pending[live_id]["enviado"] = _clone(entry["documento"])
+                    request = pending[live_id]
+                    request["enviado"] = _clone(request["documento"])
+                    history = request["enviado"]["historico"]
+                    request["resumo_enviado"] = prepare_live_payload(history) if history else None
                     self._persist_locked(pending)
                     self._pending = pending
                 sent = _clone(self._pending[live_id])
         if sent is None:
             self._notify_data()
             return
+        summary_needs_update = False
         if sent["tipo"] == "delete":
             if not self.is_admin:
                 raise SyncAuthError("A exclusão pendente exige uma administradora ativa.")
@@ -1053,11 +1065,17 @@ class CloudLiveStore(SupabaseHistorySync):
             envelope = None
         else:
             document = sent["enviado"]
+            summary = sent.get("resumo_enviado")
+            history = document["historico"]
+            if history and "resumo_enviado" not in sent:
+                # Preserve the signed payload of requests created before summaries were frozen.
+                summary = prepare_live_payload(history, legacy_dot_sales=True)
+                summary_needs_update = summary != prepare_live_payload(history)
             envelope = self._valid_envelope(self._rpc("salvar_dados_live", {
                 "p_live_id": live_id, "p_documento": document,
                 "p_versao_esperada": sent["versao_esperada"],
                 "p_operacao_id": sent["operacao_id"],
-                "p_resumo": prepare_live_payload(document["historico"]) if document["historico"] else None,
+                "p_resumo": summary,
             }))
             if (envelope["id"] != live_id
                     or envelope["versao"] != sent["versao_esperada"] + 1
@@ -1071,11 +1089,12 @@ class CloudLiveStore(SupabaseHistorySync):
             if not current or current["operacao_id"] != sent["operacao_id"]:
                 return
             pending = _clone(self._pending)
-            if sent["tipo"] == "delete" or current["documento"] == sent["enviado"]:
+            if sent["tipo"] == "delete" or (current["documento"] == sent["enviado"] and not summary_needs_update):
                 pending.pop(live_id)
             else:
-                pending[live_id] = {**current, "versao_esperada": envelope["versao"],
-                                    "operacao_id": str(uuid.uuid4()), "enviado": None}
+                next_entry = pending[live_id]
+                next_entry.update(versao_esperada=envelope["versao"], operacao_id=str(uuid.uuid4()), enviado=None)
+                next_entry.pop("resumo_enviado", None)
             legacy_ids = self._legacy_ids - ({live_id} if live_id not in pending else set())
             resolved = self._legacy_resolved | (
                 {live_id} if live_id in self._legacy_ids and live_id not in pending else set())

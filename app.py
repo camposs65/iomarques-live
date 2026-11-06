@@ -20,7 +20,14 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from ctypes import wintypes
 
 from cloud_store import CloudLiveStore
-from customer_purchases import build_purchase_history, effective_purchase_counts, normalize_customer
+from customer_purchases import (
+    UNSOLD_CUSTOMER_MARKER,
+    build_purchase_history,
+    correct_legacy_sold_count,
+    effective_purchase_counts,
+    normalize_customer,
+    sale_customer_name,
+)
 from update_client import UpdateClient
 from live_profiles import (
     IO_MARQUES, MARQUES_BRECHO, PROFILE_NAMES, MONOCHROME_COLORS,
@@ -38,7 +45,7 @@ except ImportError:
 from roguelike_game import RogueBrechoGame
 
 
-APP_VERSION = "1.9.2"
+APP_VERSION = "1.9.3"
 
 COLUMNS = ("valor", "codigo", "cliente", "suplente", "tempo")
 HEADERS = {
@@ -2819,7 +2826,8 @@ class LiveSalesApp(tk.Tk):
     def _row_bg(self, row):
         if row < 0 or row >= len(self.row_vars):
             return self.colors["table_bg"]
-        return self.colors["sold_row"] if self.row_vars[row][CLIENT_COL].get().strip() else self.colors["table_bg"]
+        customer = sale_customer_name(self.row_vars[row][CLIENT_COL].get())
+        return self.colors["sold_row"] if customer else self.colors["table_bg"]
 
     def _duplicate_code_groups(self):
         grouped = defaultdict(list)
@@ -3128,6 +3136,24 @@ class LiveSalesApp(tk.Tk):
     def _history_commission_value(self, live):
         return self._format_money(self._history_commission_amount(live))
 
+    def _history_customer_summary(self, live):
+        sold_count = live.get("sold_count", 0)
+        rows = live.get("rows")
+        if isinstance(rows, list):
+            named_customers = [
+                name for row in rows
+                if isinstance(row, dict) and isinstance(row.get("cliente"), str)
+                and (name := row["cliente"].strip())
+            ]
+            sold_count = correct_legacy_sold_count(sold_count, named_customers)
+
+        clients = live.get("clients") or []
+        visible_clients = [name for name in clients if sale_customer_name(name)]
+        clients_count = live.get("clients_count", 0)
+        if any(isinstance(name, str) and name.strip() == UNSOLD_CUSTOMER_MARKER for name in clients):
+            clients_count = len(visible_clients)
+        return sold_count, clients_count, visible_clients
+
     def _history_month_groups(self, lives):
         month_names = (
             "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -3162,16 +3188,17 @@ class LiveSalesApp(tk.Tk):
     def _current_live_stats(self):
         rows = self._rows()
         presented_rows = [row for row in rows if row["valor"].strip() or row["codigo"].strip()]
-        sold_rows = [row for row in rows if row["cliente"].strip()]
-        total = sum((self._parse_money(row["valor"]) for row in sold_rows), Decimal("0"))
+        counted_rows = [row for row in rows if row["cliente"].strip()]
+        sold_customers = [name for row in counted_rows if (name := sale_customer_name(row["cliente"]))]
+        total = sum((self._parse_money(row["valor"]) for row in counted_rows), Decimal("0"))
         presented_total = sum((self._parse_money(row["valor"]) for row in presented_rows), Decimal("0"))
         presented_count = len(presented_rows)
         presented_average = presented_total / Decimal(presented_count) if presented_count else Decimal("0")
-        clients = sorted({row["cliente"].strip() for row in sold_rows if row["cliente"].strip()}, key=str.lower)
+        clients = sorted(set(sold_customers), key=str.lower)
         return {
             "pieces_count": len(rows),
             "presented_count": presented_count,
-            "sold_count": len(sold_rows),
+            "sold_count": len(sold_customers),
             "clients_count": len(clients),
             "clients": clients,
             "total": total,
@@ -3543,6 +3570,7 @@ class LiveSalesApp(tk.Tk):
                 for index, live in enumerate(group["lives"]):
                     item_id = f"{month_id}_live_{index}"
                     item_to_live[item_id] = live
+                    sold_count, clients_count, _ = self._history_customer_summary(live)
                     tree.insert(
                         month_id,
                         "end",
@@ -3551,8 +3579,8 @@ class LiveSalesApp(tk.Tk):
                         values=(
                             live.get("duration", ""),
                             live.get("pieces_count", 0),
-                            live.get("sold_count", 0),
-                            live.get("clients_count", 0),
+                            sold_count,
+                            clients_count,
                             live.get("total", "R$ 0,00"),
                             self._history_commission_value(live),
                             PROFILE_NAMES[normalize_profile(live.get("perfil"))],
@@ -3939,7 +3967,7 @@ class LiveSalesApp(tk.Tk):
     def _summary(self):
         grouped = defaultdict(list)
         for row in self._rows():
-            cliente = row["cliente"].strip()
+            cliente = sale_customer_name(row["cliente"])
             if not cliente:
                 continue
             valor = self._parse_money(row["valor"])
@@ -3956,10 +3984,7 @@ class LiveSalesApp(tk.Tk):
 
     def _summary_text(self):
         sections = self._summary_sections()
-        if not sections:
-            return "Nenhuma peça com cliente titular ainda.\n"
-
-        lines = []
+        lines = [] if sections else ["Nenhuma peça com cliente titular ainda."]
         for index, section in enumerate(sections):
             if index > 0:
                 lines.append(SUMMARY_SEPARATOR)
@@ -3992,7 +4017,7 @@ class LiveSalesApp(tk.Tk):
                 codigo = item["codigo"] or "sem código"
                 tempo = item["tempo"] or "-"
                 valor = self._format_money(item["valor"])
-                suplente = item.get("suplente", "").strip()
+                suplente = sale_customer_name(item.get("suplente"))
                 suplente_text = f"   sup: {suplente}" if suplente else ""
                 item_lines.append(f"{CHECKBOX_TEXT} {codigo} - {tempo} - {valor}{suplente_text}")
             sections.append(
@@ -4014,7 +4039,7 @@ class LiveSalesApp(tk.Tk):
             codigo = row["codigo"] or "sem código"
             tempo = row["tempo"] or "-"
             valor = self._format_money(self._parse_money(row["valor"]))
-            cliente = row["cliente"] or "sem cliente"
+            cliente = sale_customer_name(row["cliente"]) or "sem cliente"
             suplente = row["suplente"]
             lines.append(f"{suplente} - peça {codigo} - {valor}")
             lines.append(f"  Titular: {cliente} | Tempo: {tempo}")
@@ -4311,7 +4336,6 @@ class LiveSalesApp(tk.Tk):
         ]
         if not sections:
             lines.append(("Nenhuma peça com cliente titular ainda.", False))
-            return lines
 
         for index, section in enumerate(sections):
             if index > 0:
@@ -4383,7 +4407,6 @@ class LiveSalesApp(tk.Tk):
         sections = self._summary_sections()
         if not sections:
             text.insert("end", "Nenhuma peça com cliente titular ainda.\n")
-            return
 
         for index, section in enumerate(sections):
             if index > 0:
@@ -4580,11 +4603,10 @@ class LiveSalesApp(tk.Tk):
         summary_sheet = wb.create_sheet("Resumo por cliente")
         summary_sheet.append(["Peça", "Cliente", "Código", "Tempo", "Valor", "Total da cliente"])
         summary = self._summary()
-        grand_total = Decimal("0")
+        stats = self._current_live_stats()
         piece_index = 1
         for cliente, items in summary.items():
             subtotal = sum((item["valor"] for item in items), Decimal("0"))
-            grand_total += subtotal
             first_row = True
             for item in items:
                 summary_sheet.append(
@@ -4600,7 +4622,7 @@ class LiveSalesApp(tk.Tk):
                 piece_index += 1
                 first_row = False
         summary_sheet.append([])
-        summary_sheet.append(["", "TOTAL GERAL", "", "", "", float(grand_total)])
+        summary_sheet.append(["", "TOTAL GERAL", "", "", "", float(stats["total"])])
 
         alternates_sheet = wb.create_sheet("Suplentes")
         alternates_sheet.append(["Peça", "Suplente", "Código", "Tempo", "Valor", "Cliente titular"])
@@ -4612,12 +4634,11 @@ class LiveSalesApp(tk.Tk):
                     row["codigo"],
                     row["tempo"],
                     float(self._parse_money(row["valor"])),
-                    row["cliente"],
+                    sale_customer_name(row["cliente"]),
                 ]
             )
 
         metadata_sheet = wb.create_sheet("Dados da live")
-        stats = self._current_live_stats()
         metadata_sheet.append(["Campo", "Valor"])
         metadata_sheet.append(["ID da live", self.live_id or ""])
         metadata_sheet.append(["Perfil", PROFILE_NAMES[self._current_profile()]])
@@ -4648,17 +4669,18 @@ class LiveSalesApp(tk.Tk):
             ["Finalizada em", "Iniciada em", "Duração", "Peças", "Vendidas", "Clientes", "Total", "10%", "Nomes das clientes", "Perfil"]
         )
         for live in self._read_history():
+            sold_count, clients_count, clients = self._history_customer_summary(live)
             history_sheet.append(
                 [
                     self._format_history_datetime(live.get("finished_at", "")),
                     self._format_history_datetime(live.get("started_at", "")),
                     live.get("duration", ""),
                     live.get("pieces_count", 0),
-                    live.get("sold_count", 0),
-                    live.get("clients_count", 0),
+                    sold_count,
+                    clients_count,
                     live.get("total", "R$ 0,00"),
                     self._history_commission_value(live),
-                    ", ".join(live.get("clients", [])),
+                    ", ".join(clients),
                     PROFILE_NAMES[normalize_profile(live.get("perfil"))],
                 ]
             )
@@ -4694,7 +4716,7 @@ class LiveSalesApp(tk.Tk):
 
         for row in range(2, sheets[0].max_row + 1):
             cliente = sheets[0].cell(row=row, column=CLIENT_COL + 2).value
-            if cliente:
+            if sale_customer_name(cliente):
                 for col in range(1, len(COLUMNS) + 2):
                     sheets[0].cell(row=row, column=col).fill = sold_fill
 
@@ -4717,9 +4739,9 @@ class LiveSalesApp(tk.Tk):
     def print_unsold_pieces(self, show_success=True, show_empty=True):
         self._finish_active_cell()
         rows = [
-            {**row, "peca": index}
+            {**row, "peca": index, "cliente": ""}
             for index, row in enumerate(self._rows(include_empty=True), start=1)
-            if not row["cliente"].strip() and (row["valor"].strip() or row["codigo"].strip())
+            if not sale_customer_name(row["cliente"]) and (row["valor"].strip() or row["codigo"].strip())
         ]
         if not rows:
             if show_empty:

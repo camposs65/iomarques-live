@@ -73,11 +73,18 @@ class HistoryMonthTests(unittest.TestCase):
 
     def test_excel_history_uses_same_commission_and_preserves_sales_total(self):
         self.app._finish_active_cell = Mock()
-        self.app._rows = Mock(return_value=[{
+        rows = [{
             "valor": "1.000,00", "codigo": "001", "cliente": "Teste",
             "suplente": "", "tempo": "00:01:00",
+        }, {
+            "valor": "59,90", "codigo": "014", "cliente": ".",
+            "suplente": "", "tempo": "00:01:30",
+        }]
+        self.app._rows = Mock(return_value=rows)
+        self.app._read_history = Mock(return_value=[{
+            "total": "R$ 1.059,90", "sold_count": 2, "clients_count": 2,
+            "clients": [".", "Teste"], "rows": rows,
         }])
-        self.app._read_history = Mock(return_value=[{"total": "R$ 1.000,00"}])
         self.app._save_rows = Mock()
         self.app._current_live_status = Mock(return_value="Finalizada")
         self.app._current_elapsed_seconds = Mock(return_value=60)
@@ -93,8 +100,18 @@ class HistoryMonthTests(unittest.TestCase):
             try:
                 history = workbook["Histórico de lives"]
                 self.assertEqual(history["H1"].value, "10%")
-                self.assertEqual(history["H2"].value, "R$ 100,00")
-                self.assertEqual(history["G2"].value, "R$ 1.000,00")
+                self.assertEqual(history["H2"].value, "R$ 105,99")
+                self.assertEqual(history["G2"].value, "R$ 1.059,90")
+                self.assertEqual(history["E2"].value, 1)
+                self.assertEqual(history["F2"].value, 1)
+                self.assertEqual(history["I2"].value, "Teste")
+                summary = workbook["Resumo por cliente"]
+                self.assertEqual(summary["B2"].value, "Teste")
+                self.assertEqual(summary["F2"].value, 1000)
+                self.assertEqual(summary["B4"].value, "TOTAL GERAL")
+                self.assertEqual(summary["F4"].value, 1059.90)
+                self.assertEqual(workbook["Vendas"]["D3"].value, ".")
+                self.assertIsNone(workbook["Vendas"]["D3"].fill.patternType)
             finally:
                 workbook.close()
 

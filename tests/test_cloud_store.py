@@ -382,6 +382,56 @@ class CloudStoreTests(unittest.TestCase):
         self.assertEqual(self.cloud.rows["live_test"]["versao"], 1)
         self.assertFalse(restarted.has_pending)
 
+    def test_legacy_dot_save_retries_original_request_before_fixing_summary(self):
+        live_id = "live_test"
+        operation = str(uuid.uuid4())
+        doc = document(finalized=True)
+        for snapshot in doc.values():
+            snapshot["rows"][0]["cliente"] = "."
+        original_request = {
+            "p_live_id": live_id, "p_documento": doc, "p_versao_esperada": 0,
+            "p_operacao_id": operation, "p_resumo": cloud_store.prepare_live_payload(history()),
+        }
+        self.cloud.rpc("salvar_dados_live", original_request)
+        self.manager._persist_locked({live_id: {
+            "tipo": "save", "documento": doc, "enviado": copy.deepcopy(doc),
+            "versao_esperada": 0, "operacao_id": operation, "conflito": None,
+        }})
+
+        recovered = self.make_manager()
+        recovered._flush()
+        saves = [args for name, args in self.cloud.calls if name == "salvar_dados_live"]
+        self.assertEqual(saves, [original_request, original_request])
+        self.assertTrue(recovered.has_pending)
+
+        restarted = self.make_manager()
+        restarted._flush()
+        saves = [args for name, args in self.cloud.calls if name == "salvar_dados_live"]
+        self.assertEqual(len(saves), 3)
+        corrected = saves[-1]
+        self.assertNotEqual(corrected["p_operacao_id"], operation)
+        self.assertEqual(corrected["p_versao_esperada"], 1)
+        self.assertEqual(corrected["p_documento"], doc)
+        self.assertEqual(corrected["p_resumo"]["total_vendido_centavos"], 1000)
+        self.assertEqual(corrected["p_resumo"]["pecas_vendidas"], 0)
+        self.assertEqual(corrected["p_resumo"]["pecas"][0]["codigo"], "001")
+        self.assertFalse(restarted.has_pending)
+
+    def test_finalized_retry_uses_summary_frozen_before_upload(self):
+        doc = document(finalized=True)
+        self.manager.queue_state(doc["estado"], doc["historico"])
+        self.cloud.after_save = lambda _result: (_ for _ in ()).throw(SyncTemporaryError("Lost response"))
+        self.manager._flush()
+        restarted = self.make_manager()
+        different_summary = {**cloud_store.prepare_live_payload(doc["historico"]), "pecas_vendidas": 0}
+        with patch.object(cloud_store, "prepare_live_payload", return_value=different_summary):
+            restarted._flush()
+        saves = [args for name, args in self.cloud.calls if name == "salvar_dados_live"]
+        self.assertEqual(len(saves), 2)
+        self.assertEqual(saves[0], saves[1])
+        self.assertEqual(saves[1]["p_resumo"]["pecas_vendidas"], 1)
+        self.assertFalse(restarted.has_pending)
+
     def test_new_edits_during_upload_wait_for_correct_next_revision(self):
         self.manager.queue_state(state())
         newer = state(client="cliente-nova")

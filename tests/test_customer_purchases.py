@@ -16,7 +16,7 @@ class CustomerPurchaseTests(unittest.TestCase):
                 self.assertEqual(normalize_customer(value), "ana.silva")
         self.assertEqual(normalize_customer(" Cliente Teste "), "cliente teste")
         self.assertEqual(normalize_customer("ÁlVArO"), "álvaro")
-        for value in (None, "", "   ", "@@", 3, False, [], {}):
+        for value in (None, "", "   ", "@@", " . ", 3, False, [], {}):
             with self.subTest(value=value):
                 self.assertEqual(normalize_customer(value), "")
 
@@ -25,6 +25,7 @@ class CustomerPurchaseTests(unittest.TestCase):
             {"cliente": "ana", "codigo": "024", "suplente": "bia"},
             {"cliente": " @ANA ", "valor": "R$ 0,00"},
             {"cliente": "bia"},
+            {"cliente": ".", "valor": "R$ 59,90"},
             {"codigo": "543", "suplente": "ana", "suplente1": "ana"},
             {"cliente": "   ", "suplente": "bia"},
             {"cliente": None}, {"cliente": 123}, {}, None, "ana",

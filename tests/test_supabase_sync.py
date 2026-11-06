@@ -141,6 +141,23 @@ class SupabaseSyncTests(unittest.TestCase):
         self.assertNotIn("025", serialized)
         self.assertNotIn("comissao", serialized)
 
+    def test_dot_piece_keeps_value_in_total_and_original_position_for_clipping(self):
+        live = copy.deepcopy(SAMPLE_HISTORY[0])
+        live["rows"].extend([{}, {
+            "cliente": " . ", "valor": "R$ 59,90", "codigo": "014", "tempo": "00:10:07",
+        }])
+        for saved_count, expected in ((None, 1), (2, 1), (1, 1), (8, 8), (True, None)):
+            with self.subTest(saved_count=saved_count):
+                live["sold_count"] = saved_count
+                payload = prepare_history_payload([live])[0]
+                self.assertEqual(payload["total_vendido_centavos"], 7990)
+                self.assertEqual(payload["pecas_vendidas"], expected)
+                self.assertEqual([piece["numero"] for piece in payload["pecas"]], [1, 4])
+                self.assertEqual(payload["pecas"][1], {
+                    "numero": 4, "codigo": "014", "valor_texto": "R$ 59,90",
+                    "valor_centavos": 5990, "tempo_segundos": 607,
+                })
+
     def test_saved_summary_takes_priority_and_sold_out_live_is_sent(self):
         live = copy.deepcopy(SAMPLE_HISTORY[0])
         live.update(total="R$ 1.234,50", pieces_count=8, sold_count=8)

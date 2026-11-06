@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from pathlib import Path
 
+from customer_purchases import correct_legacy_sold_count, sale_customer_name
+
 
 CONFIG_FILENAME = "integracao_supabase.json"
 LOCAL_CONFIG_FILENAME = "integracao_supabase.local.json"
@@ -355,19 +357,19 @@ def _parse_count(value):
         return None
 
 
-def _history_summary(live, rows):
+def _history_summary(live, rows, *, legacy_dot_sales):
     total_value = live.get("total")
     total = None
     if total_value is not None and str(total_value).strip():
         total = _parse_money_cents(total_value, MAX_TOTAL_CENTS)
     elif rows is not None:
-        sold_values = [
+        counted_values = [
             _parse_money_cents(row.get("valor"), MAX_TOTAL_CENTS)
             for row in rows
             if isinstance(row, dict) and _text(row.get("cliente"))
         ]
-        if all(value is not None for value in sold_values):
-            amount = sum(sold_values)
+        if all(value is not None for value in counted_values):
+            amount = sum(counted_values)
             total = amount if amount <= MAX_TOTAL_CENTS else None
 
     pieces_value = live.get("pieces_count")
@@ -377,15 +379,18 @@ def _history_summary(live, rows):
     if rows is not None:
         if pieces_value is None or str(pieces_value).strip() == "":
             pieces = _parse_count(len(rows))
+        named_customers = [
+            name for row in rows
+            if isinstance(row, dict) and (name := _text(row.get("cliente")))
+        ]
         if sold_value is None or str(sold_value).strip() == "":
-            sold = _parse_count(sum(
-                bool(_text(row.get("cliente")))
-                for row in rows if isinstance(row, dict)
-            ))
+            sold = _parse_count(len(named_customers))
+        if not legacy_dot_sales:
+            sold = correct_legacy_sold_count(sold, named_customers)
     return total, pieces, sold
 
 
-def prepare_live_payload(live):
+def prepare_live_payload(live, *, legacy_dot_sales=False):
     if not isinstance(live, dict):
         return None
 
@@ -404,7 +409,7 @@ def prepare_live_payload(live):
         return None
 
     rows = live.get("rows") if isinstance(live.get("rows"), list) else None
-    total, pieces, sold = _history_summary(live, rows)
+    total, pieces, sold = _history_summary(live, rows, legacy_dot_sales=legacy_dot_sales)
     unsold = []
     for index, row in enumerate(rows or []):
         if not isinstance(row, dict):
@@ -412,7 +417,8 @@ def prepare_live_payload(live):
         value_text = _text(row.get("valor"))
         code = _text(row.get("codigo"))
         client = _text(row.get("cliente"))
-        if client or (not value_text and not code):
+        sold_to = client if legacy_dot_sales else sale_customer_name(client)
+        if sold_to or (not value_text and not code):
             continue
         unsold.append(
             {
