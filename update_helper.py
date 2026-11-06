@@ -186,7 +186,13 @@ def wait_for_parent(job, timeout=PARENT_WAIT_SECONDS):
     if not handle:
         return
     try:
-        image, created = _process_identity(kernel, handle)
+        try:
+            image, created = _process_identity(kernel, handle)
+        except UpdateError:
+            # Windows can retain an exited process handle after releasing its executable path.
+            if kernel.WaitForSingleObject(handle, 0) == 0:
+                return
+            raise
         if image != job["parent_executable"] or (
                 "parent_started" in job and created != job["parent_started"]):
             raise UpdateError("O processo aberto mudou. A atualização foi cancelada por segurança.")

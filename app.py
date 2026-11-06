@@ -45,7 +45,7 @@ except ImportError:
 from roguelike_game import RogueBrechoGame
 
 
-APP_VERSION = "1.9.3"
+APP_VERSION = "1.9.4"
 
 COLUMNS = ("valor", "codigo", "cliente", "suplente", "tempo")
 HEADERS = {

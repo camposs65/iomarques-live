@@ -1,6 +1,7 @@
 import json
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -380,6 +381,31 @@ class UpdateHelperTests(unittest.TestCase):
     def test_missing_parent_process_is_not_killed_or_waited_again(self):
         with patch.object(update_helper, "_process_handle", return_value=(Mock(), None)):
             update_helper.wait_for_parent({"parent_pid": 123})
+
+    def test_parent_identity_failure_requires_confirmed_exit(self):
+        job = update_helper.load_update_job(self.prepare().job)
+        for status in (0, 0x102, 0xFFFFFFFF):
+            with self.subTest(wait_status=status):
+                kernel = Mock()
+                kernel.WaitForSingleObject.return_value = status
+                with patch.object(update_helper, "_process_handle", return_value=(kernel, 99)), \
+                        patch.object(update_helper, "_process_identity",
+                                     side_effect=update_helper.UpdateError("identity unavailable")):
+                    if status == 0:
+                        update_helper.wait_for_parent(job)
+                    else:
+                        with self.assertRaisesRegex(update_helper.UpdateError, "identity unavailable"):
+                            update_helper.wait_for_parent(job)
+                kernel.WaitForSingleObject.assert_called_once_with(99, 0)
+                kernel.CloseHandle.assert_called_once_with(99)
+
+    @unittest.skipUnless(os.name == "nt", "requires Windows process handles")
+    def test_wait_for_exited_process_with_retained_handle(self):
+        with subprocess.Popen([sys.executable, "-c", "pass"],
+                              creationflags=subprocess.CREATE_NO_WINDOW) as process:
+            self.assertEqual(process.wait(timeout=10), 0)
+            update_helper.wait_for_parent({"parent_pid": process.pid,
+                                           "parent_executable": Path(sys.executable).resolve()})
 
     def test_parent_identity_must_match_executable_and_creation_time(self):
         prepared = self.prepare()
