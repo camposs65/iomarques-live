@@ -45,7 +45,7 @@ except ImportError:
 from roguelike_game import RogueBrechoGame
 
 
-APP_VERSION = "1.9.7"
+APP_VERSION = "1.9.8"
 
 COLUMNS = ("valor", "codigo", "tamanho", "cliente", "suplente")
 ROW_COLUMNS = (*COLUMNS, "tempo")
@@ -4862,7 +4862,7 @@ class LiveSalesApp(tk.Tk):
             "peca": 4,
             "valor": 11,
             "codigo": 8,
-            "tamanho": 8,
+            "tamanho": 20,
             "cliente": 11 if unsold else 20,
             "suplente": 16,
             "tempo": 8,
@@ -4874,6 +4874,8 @@ class LiveSalesApp(tk.Tk):
 
         header = " ".join((cell("", widths["check"]), cell("Peça", widths["peca"]),
                            *(cell(HEADERS[col], widths[col]) for col in columns)))
+        before_size = ("check", "peca", *columns[:columns.index("tamanho")])
+        size_indent = " " * sum(widths[col] + 1 for col in before_size)
         separator = "-" * len(header)
         lines = [
             f"{PROFILE_NAMES[self._current_profile()]} - {title}",
@@ -4883,9 +4885,13 @@ class LiveSalesApp(tk.Tk):
             separator,
         ]
         for index, row in enumerate(rows, start=1):
+            size_lines = textwrap.wrap(row.get("tamanho", ""), width=widths["tamanho"],
+                                       break_on_hyphens=False) or [""]
+            first_line = {**row, "tamanho": size_lines[0]}
             lines.append(" ".join((cell(CHECKBOX_TEXT, widths["check"]),
                                    cell(row.get("peca", index), widths["peca"], "right"),
-                                   *(cell(row.get(col, ""), widths[col]) for col in columns))))
+                                   *(cell(first_line.get(col, ""), widths[col]) for col in columns))))
+            lines.extend(size_indent + part for part in size_lines[1:])
         return "\n".join(lines) + "\n"
 
     def _send_text_to_printer(self, text, title):
@@ -5008,19 +5014,20 @@ class LiveSalesApp(tk.Tk):
                 y = margin_y
                 printed_on_page = False
                 for line, bold in column:
-                    if paginate and printed_on_page and y + line_height > margin_y + printable_height:
-                        if gdi32.EndPage(hdc) <= 0:
-                            raise ctypes.WinError(ctypes.get_last_error())
-                        if gdi32.StartPage(hdc) <= 0:
-                            raise ctypes.WinError(ctypes.get_last_error())
-                        y = margin_y
-                        printed_on_page = False
                     selected_font = bold_font if bold else regular_font
                     gdi32.SelectObject(hdc, selected_font)
-                    printable_line = self._clip_line_for_print_width(gdi32, hdc, line, column_width)
-                    gdi32.TextOutW(hdc, x, y, printable_line, len(printable_line))
-                    y += line_height
-                    printed_on_page = True
+                    for printable_line in self._wrap_line_for_print_width(gdi32, hdc, line, column_width):
+                        if (paginate or columns == 1) and printed_on_page and y + line_height > margin_y + printable_height:
+                            if gdi32.EndPage(hdc) <= 0 or gdi32.StartPage(hdc) <= 0:
+                                raise ctypes.WinError(ctypes.get_last_error())
+                            y = margin_y
+                            gdi32.SelectObject(hdc, selected_font)
+                        if printable_line:
+                            length = len(printable_line.encode("utf-16-le")) // 2
+                            if not gdi32.TextOutW(hdc, x, y, printable_line, length):
+                                raise ctypes.WinError(ctypes.get_last_error())
+                        y += line_height
+                        printed_on_page = True
 
             if gdi32.EndPage(hdc) <= 0:
                 raise ctypes.WinError(ctypes.get_last_error())
@@ -5079,7 +5086,8 @@ class LiveSalesApp(tk.Tk):
             widest = 0
             for line, bold in print_lines:
                 old_font = gdi32.SelectObject(hdc, bold_font if bold else regular_font)
-                gdi32.GetTextExtentPoint32W(hdc, line, len(line), ctypes.byref(size))
+                length = len(line.encode("utf-16-le")) // 2
+                gdi32.GetTextExtentPoint32W(hdc, line, length, ctypes.byref(size))
                 gdi32.SelectObject(hdc, old_font)
                 widest = max(widest, size.cx)
 
@@ -5100,28 +5108,31 @@ class LiveSalesApp(tk.Tk):
         height = -max(1, int(points * dpi_y / 72))
         return gdi32.CreateFontW(height, 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, 5, 49, "Consolas")
 
-    def _clip_line_for_print_width(self, gdi32, hdc, line, printable_width):
+    def _wrap_line_for_print_width(self, gdi32, hdc, line, printable_width):
         size = wintypes.SIZE()
-        gdi32.GetTextExtentPoint32W(hdc, line, len(line), ctypes.byref(size))
-        if size.cx <= printable_width:
-            return line
-        if printable_width <= 0:
-            return ""
 
-        ellipsis = "..."
-        low = 0
-        high = max(0, len(line) - len(ellipsis))
-        best = ellipsis
-        while low <= high:
-            mid = (low + high) // 2
-            candidate = line[:mid].rstrip() + ellipsis
-            gdi32.GetTextExtentPoint32W(hdc, candidate, len(candidate), ctypes.byref(size))
-            if size.cx <= printable_width:
-                best = candidate
-                low = mid + 1
-            else:
-                high = mid - 1
-        return best
+        def fits(text):
+            length = len(text.encode("utf-16-le")) // 2
+            if not gdi32.GetTextExtentPoint32W(hdc, text, length, ctypes.byref(size)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            return size.cx <= printable_width
+
+        while line and not fits(line):
+            low, high = 1, len(line) - 1
+            while low <= high:
+                middle = (low + high) // 2
+                if fits(line[:middle]):
+                    low = middle + 1
+                else:
+                    high = middle - 1
+            if high == 0:
+                raise RuntimeError("A largura da impressora não comporta o texto.")
+            space = line.rfind(" ", 0, high + 1)
+            if space > 0 and line[:space].strip():
+                high = space
+            yield line[:high].rstrip()
+            line = line[high:].lstrip()
+        yield line
 
     def _default_windows_printer(self):
         winspool = ctypes.WinDLL("winspool.drv", use_last_error=True)

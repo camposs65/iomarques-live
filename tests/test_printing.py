@@ -81,6 +81,48 @@ class UnsoldPrintingTests(unittest.TestCase):
         self.assertIn("P/M", unsold)
         self.assertIn("00:01:23", unsold)
 
+    def test_full_size_description_is_printed_in_both_tables(self):
+        size = "P 90 COS ESTICADO"
+        self.set_rows([{"codigo": "024", "tamanho": size, "tempo": "00:01:23"}])
+        for print_table in (self.app.print_sheet, self.app.print_unsold_pieces):
+            with self.subTest(print_table=print_table.__name__):
+                self.assertTrue(print_table(show_success=False))
+                text = self.app._send_text_to_printer.call_args.args[0]
+                self.assertIn(size, text)
+                self.assertNotIn("P 90 ...", text)
+
+    def test_maximum_size_wraps_under_its_column_with_original_index_and_time(self):
+        size = "ABCDEFGHIJKLMNOPQRST" * 5
+        self.set_rows([{}, {"codigo": "024", "tamanho": size, "tempo": "00:01:23"},
+                       {"codigo": "543"}])
+
+        self.assertTrue(self.app.print_unsold_pieces(show_success=False))
+        self.assertEqual(self.printed_indices(), [2, 3])
+        lines = self.app._send_text_to_printer.call_args.args[0].splitlines()
+        start = lines[3].index("Tamanho")
+        end = lines[3].index("Cliente") - 1
+        piece_lines = lines[5:-1]
+        self.assertEqual("".join(line[start:end].strip() for line in piece_lines), size)
+        self.assertIn("00:01:23", piece_lines[0])
+        for continuation in piece_lines[1:]:
+            self.assertEqual(continuation[:start], " " * start)
+            self.assertLessEqual(len(continuation), end)
+
+    def test_narrow_windows_print_wraps_without_losing_text(self):
+        gdi = Mock()
+
+        def measure(_device, line, length, extent):
+            self.assertEqual(length, len(line.encode("utf-16-le")) // 2)
+            extent._obj.cx = length
+            return True
+
+        gdi.GetTextExtentPoint32W.side_effect = measure
+        line = "   P 90 COS ESTICADO 📏 012345678901"
+        wrapped = list(self.app._wrap_line_for_print_width(gdi, None, line, 10))
+        self.assertGreater(len(wrapped), 1)
+        self.assertEqual("".join(part.replace(" ", "") for part in wrapped), line.replace(" ", ""))
+        self.assertTrue(all(len(part.encode("utf-16-le")) // 2 <= 10 for part in wrapped))
+
     def test_summary_shows_size_per_piece_without_changing_messages_or_totals(self):
         rows = [
             {"codigo": "024", "tamanho": "P/M", "cliente": "Teste", "valor": "20,00", "tempo": "00:01:23"},

@@ -1,4 +1,4 @@
-# IoMarques Brechó — Controle de Vendas da Live · v1.9.7
+# IoMarques Brechó — Controle de Vendas da Live · v1.9.8
 
 Aplicativo para Windows usado para anotar as peças durante as lives no Instagram. O Supabase guarda a live em andamento e o histórico completo; a instalação prepara o programa e cria o atalho na Área de Trabalho.
 
@@ -159,8 +159,8 @@ Depois de finalizar:
 - `Exportar Excel`: cria um `.xlsx` com índice das peças, filtros nas colunas e as abas `Vendas`, `Resumo por cliente`, `Suplentes`, `Dados da live` e `Histórico de lives`.
 - `Imprimir todos`: envia o resumo, a planilha e as peças não vendidas para a impressora padrão, ignorando automaticamente os itens que não tiverem dados.
 - `Imprimir resumo`: envia um resumo por cliente com checkbox, nome da cliente em negrito, suplente na mesma linha da peça e totais finais. Quando não couber em uma folha, continua em páginas seguintes com fonte legível.
-- `Imprimir planilha`: imprime a planilha em A4, retrato, ajustada para caber em uma página.
-- `Imprimir não vendidas`: imprime apenas as peças preenchidas que ainda não têm cliente, com checkbox e o índice original da planilha principal (por exemplo, 3, 5 e 10), sem renumerar as peças. A opção `Imprimir todos` mantém a mesma numeração nesse relatório.
+- Use `Imprimir planilha` para imprimir a planilha com o tamanho completo de cada peça. Descrições longas continuam em linhas adicionais e, se necessário, a planilha ocupa mais de uma página.
+- Use `Imprimir não vendidas` para imprimir as peças não vendidas com checkbox, tamanho completo e o índice original da planilha principal (por exemplo, 3, 5 e 10). A opção `Imprimir todos` mantém a mesma numeração nesse relatório.
 - `Nova live / Limpar tudo`: guarda a planilha atual e abre outra vazia com o contador zerado. Não exclui o histórico ou os rascunhos do Supabase; exclusão definitiva é uma ação separada de administrador.
 
 ## Logo e ícone
