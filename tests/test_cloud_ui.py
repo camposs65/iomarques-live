@@ -5,7 +5,7 @@ from tkinter import ttk
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from app import CLIENT_COL, CODE_COL, COLUMNS, ROW_COLUMNS, SIZE_COL, SUPLENTE_COL, TIME_COL, LiveSalesApp
+from app import CLIENT_COL, CODE_COL, COLUMNS, ROW_COLUMNS, SIZE_COL, SUPLENTE_COL, TIME_COL, VALUE_COL, LiveSalesApp
 from supabase_sync import prepare_live_payload
 
 
@@ -166,6 +166,91 @@ class CloudUiTests(unittest.TestCase):
                     self.assertEqual(header.winfo_width(), body.winfo_width())
                 self.assertEqual(self.app.header_frame.winfo_width(), self.app.canvas.winfo_width())
                 self.assertEqual(sum(cell.winfo_width() for cell in cells), self.app.canvas.winfo_width())
+        self.app.withdraw()
+
+    @patch("app.messagebox.askyesno", return_value=True)
+    def test_live_column_order_preserves_rows_focus_filters_and_saves(self, _confirm):
+        self.store.tamanho_pecas_disponivel = True
+        rows = [{**ROW, "tamanho": "38"}, {**ROW, "codigo": "999", "tamanho": "M", "cliente": "Teste"}]
+        self.assertTrue(self.app._apply_saved_state({"live": {"id": "current", "running": False}, "rows": rows}))
+        entries = tuple(self.app.cell_entries[1])
+        self.app._set_active_cell(1, SIZE_COL)
+        self.app._record_undo_state()
+        undo = copy.deepcopy(self.app.undo_stack)
+        self.app.filter_vars[CODE_COL].set("999")
+        self.app._apply_filters()
+        self.assertEqual(self.app._visual_column_order(), tuple(range(len(COLUMNS))))
+        self.app.start_live()
+        order = (SIZE_COL, VALUE_COL, CODE_COL, CLIENT_COL, SUPLENTE_COL)
+        self.assertEqual(self.app._visual_column_order(), order)
+        self.assertEqual(self.app._rows(), rows)
+        self.assertEqual(tuple(self.app.cell_entries[1]), entries)
+        self.assertEqual(self.app.active_cell, (1, SIZE_COL))
+        self.assertEqual(self.app.undo_stack, undo)
+        self.assertEqual(self.app.cell_frames[0][CODE_COL].winfo_manager(), "")
+        for position, column in enumerate(order, start=1):
+            self.assertEqual(int(self.app.header_cells[column].grid_info()["column"]), position)
+            self.assertEqual(int(self.app.cell_frames[1][column].grid_info()["column"]), position)
+        saves = copy.deepcopy(self.store.saved)
+        with patch.object(self.app, "_apply_filters", wraps=self.app._apply_filters) as filters:
+            self.app._refresh_live_controls()
+            self.app._refresh_live_controls()
+            filters.assert_not_called()
+        self.app.filter_vars[CODE_COL].set("")
+        self.app._apply_filters()
+        self.app._add_row(["R$ 12,00", "999", "G", "", "", "00:00:12"])
+        for position, column in enumerate(order, start=1):
+            self.assertEqual(int(self.app.cell_frames[-1][column].grid_info()["column"]), position)
+        self.assertEqual(self.store.saved, saves)
+        finished_rows = self.app._rows()
+        self.app.finish_live()
+        self.assertEqual(self.app._visual_column_order(), tuple(range(len(COLUMNS))))
+        self.assertEqual(self.app._rows(), finished_rows)
+        for column in range(len(COLUMNS)):
+            self.assertEqual(int(self.app.header_cells[column].grid_info()["column"]), column + 1)
+            self.assertEqual(int(self.app.cell_frames[1][column].grid_info()["column"]), column + 1)
+
+    def test_live_keyboard_navigation_follows_visual_order_and_skips_locked_size(self):
+        self.app.live_running = True
+        self.app._refresh_live_controls()
+        self.store.tamanho_pecas_disponivel = True
+        with patch.object(self.app, "_focus_cell") as focus:
+            self.app._move_focus_right(0, SIZE_COL)
+            self.app._move_focus_right(0, VALUE_COL)
+            self.app._move_focus_right(0, CODE_COL)
+            self.app._move_focus_right(0, SUPLENTE_COL)
+            self.app._move_focus_left(1, SIZE_COL)
+            self.assertEqual([call.args for call in focus.call_args_list],
+                             [(0, VALUE_COL), (0, CODE_COL), (0, CLIENT_COL), (1, SIZE_COL), (0, SUPLENTE_COL)])
+        self.store.tamanho_pecas_disponivel = False
+        with patch.object(self.app, "_focus_cell") as focus:
+            self.app._move_focus_right(0, SUPLENTE_COL)
+            self.app._move_focus_left(1, VALUE_COL)
+            self.assertEqual([call.args for call in focus.call_args_list], [(1, VALUE_COL), (0, SUPLENTE_COL)])
+        self.app.live_running = False
+        self.app._refresh_live_controls()
+
+    @patch("app.messagebox.askyesno", return_value=True)
+    def test_live_headers_stay_aligned_after_start_resizes_and_finish(self, _confirm):
+        self.fill_row()
+        self.app._ensure_blank_row()
+        self.app.deiconify()
+        for start_live in (True, False):
+            if start_live:
+                self.app.start_live()
+            else:
+                self.app.finish_live()
+            for width in (960, 1434, 1160):
+                with self.subTest(running=start_live, width=width):
+                    self.app.geometry(f"{width}x580")
+                    self.app.update()
+                    order = self.app._visual_column_order()
+                    cells = (self.app.index_frames[0], *(self.app.cell_frames[0][col] for col in order))
+                    for column, body in enumerate(cells):
+                        header = self.app.header_frame.grid_slaves(row=0, column=column)[0]
+                        self.assertEqual(header.winfo_rootx(), body.winfo_rootx())
+                        self.assertEqual(header.winfo_width(), body.winfo_width())
+                    self.assertEqual(sum(cell.winfo_width() for cell in cells), self.app.canvas.winfo_width())
         self.app.withdraw()
 
     def test_sold_color_updates_on_customer_change_without_keyboard_or_new_save(self):

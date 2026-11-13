@@ -1,4 +1,4 @@
-# IoMarques Brechó — Controle de Vendas da Live · v1.9.8
+# IoMarques Brechó — Controle de Vendas da Live · v1.9.9
 
 Aplicativo para Windows usado para anotar as peças durante as lives no Instagram. O Supabase guarda a live em andamento e o histórico completo; a instalação prepara o programa e cria o atalho na Área de Trabalho.
 
@@ -64,7 +64,9 @@ Os arquivos de uso diário continuam ignorados pelo Git. A pasta `backups-public
 
 - Antes de iniciar, escolha `Io Marques` ou `Marques Brechó` no interruptor de perfil. O masculino usa preto, branco e cinza; Io Marques mantém suas cores habituais.
 - Clique em `Iniciar live` no momento em que a gravação da live começar.
+- Enquanto a live estiver em andamento, a planilha mostra `Tamanho → Valor → Código → Cliente → Suplente`. Ao finalizar, a ordem visual anterior volta, sem mudar os dados ou as exportações. Tab e as setas laterais acompanham a ordem da tela.
 - O contador fica rodando no canto superior direito.
+- Ao lado do cronômetro, um indicador pequeno mostra quantas clientes diferentes compraram na live atual. Variações de maiúsculas e `@` são unificadas; suplentes, campos vazios e `.` não entram nessa contagem. O indicador não soma compras de outras lives.
 - Ao preencher `Valor` ou `Código`, o app salva automaticamente o horário daquela peça, sem exibir uma coluna de tempo. A caixa junto do número da peça continua disponível para marcar ou remover esse horário.
 - Preencha `Tamanho` entre `Código` e `Cliente`, com texto livre, por exemplo `M`, `38` ou `P/M`. O campo é opcional.
 - Clique em `Finalizar live` quando a live terminar.

@@ -60,6 +60,98 @@ class CustomerPurchaseUiTests(unittest.TestCase):
         self.app.row_vars[index][CLIENT_COL].set(customer)
         self.app._on_key_release(SimpleNamespace(keysym="a"), index, CLIENT_COL)
 
+    def test_live_client_count_is_unique_and_independent_of_cloud_history(self):
+        self.store.cloud_loaded = False
+        self.app._apply_cloud_data()
+        current_rows = [row("Ana"), row("@ANA", "025"), row(" @@ana ", "026"),
+                        row("bia", "027"), row(".", "028"), row("@@", "029"),
+                        row("", "030", alternate="carla")]
+        self.apply_rows(current_rows)
+        snapshot = self.app._sheet_data()
+        stats = self.app._current_live_stats()
+        self.store.queue_state.reset_mock()
+        self.store.history.reset_mock()
+
+        self.app._refresh_live_clients()
+
+        self.assertFalse(self.app.purchase_history_loaded)
+        self.assertEqual(self.app.live_clients_label.cget("text"), "2 clientes")
+        self.assertEqual(self.app._sheet_data(), snapshot)
+        self.assertEqual(self.app._current_live_stats(), stats)
+        self.assertEqual(stats["clients_count"], 5)
+        self.assertEqual(self.app._current_live_history_record()["clients_count"], 5)
+        self.store.queue_state.assert_not_called()
+        self.store.history.assert_not_called()
+
+    def test_live_client_trace_updates_without_saving_or_counting_alternates(self):
+        self.apply_rows([row("ana"), row("@ANA", "025", alternate="bia")])
+        self.store.queue_state.reset_mock()
+        self.assertEqual(self.app.live_clients_label.cget("text"), "1 cliente")
+
+        self.app.row_vars[1][CLIENT_COL].set("bia")
+        self.assertEqual(self.app.live_clients_label.cget("text"), "2 clientes")
+        self.app.row_vars[0][CLIENT_COL].set(" . ")
+        self.assertEqual(self.app.live_clients_label.cget("text"), "1 cliente")
+        self.app.row_vars[1][SUPLENTE_COL].set("carla")
+        self.assertEqual(self.app.live_clients_label.cget("text"), "1 cliente")
+        self.app.row_vars[1][CLIENT_COL].set("@@")
+        self.assertEqual(self.app.live_clients_label.cget("text"), "0 clientes")
+        self.store.queue_state.assert_not_called()
+
+    def test_live_client_count_follows_promotion_clear_undo_and_redo(self):
+        self.apply_rows([row("ana", alternate="bia"), row("@ANA", "025")])
+        self.assertEqual(self.app.live_clients_label.cget("text"), "1 cliente")
+
+        self.app._clear_client_cell(0, CLIENT_COL)
+        self.assertEqual(self.app.live_clients_label.cget("text"), "2 clientes")
+        self.assertEqual(self.app.row_vars[0][CLIENT_COL].get(), "bia")
+        self.assertEqual(self.app.row_vars[0][SUPLENTE_COL].get(), "")
+        self.app.undo()
+        self.assertEqual(self.app.live_clients_label.cget("text"), "1 cliente")
+        self.app.redo()
+        self.assertEqual(self.app.live_clients_label.cget("text"), "2 clientes")
+        self.app._clear_client_cell(0, CLIENT_COL)
+        self.assertEqual(self.app.live_clients_label.cget("text"), "1 cliente")
+        self.app._clear_client_cell(1, CLIENT_COL)
+        self.assertEqual(self.app.live_clients_label.cget("text"), "0 clientes")
+
+    @patch("app.messagebox.askyesno", return_value=True)
+    def test_live_client_count_reloads_and_resets_for_a_new_live(self, _confirm):
+        historical = live("previous", [row("ana"), row("@ANA", "025"), row("bia", "026")])
+        self.assertTrue(self.app._load_history_live_into_main_sheet(historical))
+        self.assertEqual(self.app.live_clients_label.cget("text"), "2 clientes")
+        self.assertEqual(self.app.live_clients_label.winfo_manager(), "")
+        self.store.queue_state.assert_not_called()
+
+        self.app.clear_all()
+
+        self.assertEqual(self.app.live_clients_label.cget("text"), "0 clientes")
+        self.assertEqual(self.app.live_clients_label.winfo_manager(), "")
+        self.assertEqual(self.app._rows(), [])
+        self.assertIsNone(self.app.live_id)
+        self.store.queue_state.assert_not_called()
+
+    @patch("app.messagebox.askyesno", return_value=True)
+    def test_live_client_label_is_small_and_left_of_timer_only_while_running(self, _confirm):
+        label = self.app.live_clients_label
+        self.assertEqual(label.cget("text"), "0 clientes")
+        self.assertEqual(label.winfo_manager(), "")
+        self.assertIn("9", label.cget("font"))
+        self.assertIs(label.master, self.app.timer_label.master)
+        self.app.start_live()
+        self.app.geometry("960x580")
+        self.app.deiconify()
+        self.app.update()
+
+        self.assertTrue(label.winfo_ismapped())
+        self.assertTrue(self.app.timer_label.winfo_ismapped())
+        self.assertGreater(label.winfo_width(), 1)
+        self.assertLessEqual(label.winfo_rootx() + label.winfo_width(), self.app.timer_label.winfo_rootx())
+        self.app.finish_live()
+        self.app.update_idletasks()
+        self.assertEqual(label.winfo_manager(), "")
+        self.app.withdraw()
+
     def test_small_badge_is_separate_from_name_and_hidden_on_blank_rows(self):
         self.apply_rows([row("@ANA")])
         badge = self.badge()

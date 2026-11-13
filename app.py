@@ -23,6 +23,7 @@ from cloud_store import CloudLiveStore
 from customer_purchases import (
     UNSOLD_CUSTOMER_MARKER,
     build_purchase_history,
+    count_customer_rows,
     correct_legacy_sold_count,
     effective_purchase_counts,
     normalize_customer,
@@ -45,7 +46,7 @@ except ImportError:
 from roguelike_game import RogueBrechoGame
 
 
-APP_VERSION = "1.9.8"
+APP_VERSION = "1.9.9"
 
 COLUMNS = ("valor", "codigo", "tamanho", "cliente", "suplente")
 ROW_COLUMNS = (*COLUMNS, "tempo")
@@ -1154,8 +1155,14 @@ class LiveSalesApp(tk.Tk):
         )
         self.live_status_label.pack(side="top", anchor="e")
 
+        timer_line = tk.Frame(timer_panel, bg=self.colors["app_bg"])
+        timer_line.pack(side="top", anchor="e", pady=(3, 0))
+        self.live_clients_label = tk.Label(
+            timer_line, text="0 clientes", bg=self.colors["app_bg"],
+            fg=self.colors["button_text"], font=("Segoe UI", 9),
+        )
         self.timer_label = tk.Label(
-            timer_panel,
+            timer_line,
             text="00:00:00",
             bg=self.colors["timer_bg"],
             fg=self.colors["text"],
@@ -1163,7 +1170,7 @@ class LiveSalesApp(tk.Tk):
             padx=14,
             pady=3,
         )
-        self.timer_label.pack(side="top", anchor="e", pady=(3, 0))
+        self.timer_label.pack(side="left")
 
         self.total_sold_label = tk.Label(
             timer_panel,
@@ -2140,6 +2147,8 @@ class LiveSalesApp(tk.Tk):
 
     def _build_table_header(self):
         self.filter_buttons = []
+        self.header_cells = []
+        self.applied_column_order = None
         index_cell = tk.Frame(
             self.header_frame,
             bg=self.colors["table_header"],
@@ -2169,6 +2178,7 @@ class LiveSalesApp(tk.Tk):
                 highlightthickness=1,
             )
             cell.grid(row=0, column=col + 1, sticky="nsew")
+            self.header_cells.append(cell)
 
             label = tk.Label(
                 cell,
@@ -2227,11 +2237,33 @@ class LiveSalesApp(tk.Tk):
 
     def _on_canvas_configure(self, event):
         self.canvas.itemconfigure(self.body_window, width=event.width)
-        minimums = self.table_column_minimums
-        if event.width < len(minimums):
+        self._resize_table_columns(event.width)
+
+    def _visual_column_order(self):
+        if self.live_running:
+            return (SIZE_COL, VALUE_COL, CODE_COL, CLIENT_COL, SUPLENTE_COL)
+        return tuple(range(len(COLUMNS)))
+
+    def _table_grid_column(self, col):
+        return self._visual_column_order().index(col) + 1
+
+    def _refresh_table_column_order(self):
+        order = self._visual_column_order()
+        if order == self.applied_column_order:
             return
-        extra = event.width - sum(minimums)
-        weights = TABLE_COLUMN_WEIGHTS if extra >= 0 else minimums
+        self.applied_column_order = order
+        for position, col in enumerate(order, start=1):
+            self.header_cells[col].grid_configure(column=position)
+        self._apply_filters()
+        self._resize_table_columns(self.canvas.winfo_width())
+
+    def _resize_table_columns(self, available_width):
+        indices = (0, *(col + 1 for col in self._visual_column_order()))
+        minimums = tuple(self.table_column_minimums[col] for col in indices)
+        if available_width < len(minimums):
+            return
+        extra = available_width - sum(minimums)
+        weights = tuple(TABLE_COLUMN_WEIGHTS[col] for col in indices) if extra >= 0 else minimums
         total_weight = sum(weights)
         used_weight = 0
         for col, (minimum, weight) in enumerate(zip(minimums, weights)):
@@ -2459,7 +2491,7 @@ class LiveSalesApp(tk.Tk):
             for col, cell in enumerate(self.cell_frames[row_index]):
                 if visible:
                     self.index_frames[row_index].grid(row=row_index, column=0, sticky="nsew")
-                    cell.grid(row=row_index, column=col + 1, sticky="nsew")
+                    cell.grid(row=row_index, column=self._table_grid_column(col), sticky="nsew")
                 else:
                     self.index_frames[row_index].grid_remove()
                     cell.grid_remove()
@@ -2485,7 +2517,8 @@ class LiveSalesApp(tk.Tk):
 
         matches = []
         for row_index, row_vars in enumerate(self.row_vars):
-            for col, var in enumerate(row_vars[:len(COLUMNS)]):
+            for col in self._visual_column_order():
+                var = row_vars[col]
                 if query in var.get().strip().lower():
                     matches.append((row_index, col))
 
@@ -2567,7 +2600,7 @@ class LiveSalesApp(tk.Tk):
                 highlightbackground=self.colors["grid"],
                 highlightthickness=1,
             )
-            cell.grid(row=row_index, column=col + 1, sticky="nsew")
+            cell.grid(row=row_index, column=self._table_grid_column(col), sticky="nsew")
 
             value = values[col] if col < len(values) else ""
             var = tk.StringVar(value=value)
@@ -2651,7 +2684,7 @@ class LiveSalesApp(tk.Tk):
         self.cell_entries.append(row_entries)
         self.clear_buttons.append(row_buttons)
         self.customer_count_labels.append(customer_count)
-        row_vars[CLIENT_COL].trace_add("write", lambda *_args, r=row_index: self._refresh_row_style(r))
+        row_vars[CLIENT_COL].trace_add("write", lambda *_args, r=row_index: self._customer_value_changed(r))
         self._refresh_row_style(row_index)
         self._on_body_configure()
         if hasattr(self, "filter_vars") and any(var.get().strip() for var in self.filter_vars):
@@ -2744,24 +2777,23 @@ class LiveSalesApp(tk.Tk):
             self.manual_time_vars[row].set(False)
 
     def _move_focus_left(self, row, col):
-        target_row = row
-        target_col = col - 1
-        if target_col == SIZE_COL and not self._size_column_available():
-            target_col -= 1
-        if target_col < 0:
-            target_row = max(0, row - 1)
-            target_col = len(COLUMNS) - 1
-        return self._focus_cell(target_row, target_col)
+        return self._move_horizontal_focus(row, col, -1)
 
     def _move_focus_right(self, row, col):
+        return self._move_horizontal_focus(row, col, 1)
+
+    def _move_horizontal_focus(self, row, col, direction):
+        columns = self._visual_column_order()
+        position = columns.index(col)
         target_row = row
-        target_col = col + 1
-        if target_col == SIZE_COL and not self._size_column_available():
-            target_col += 1
-        if target_col >= len(COLUMNS):
-            target_row = row + 1
-            target_col = 0
-        return self._focus_cell(target_row, target_col)
+        for _ in columns:
+            position += direction
+            if position < 0 or position >= len(columns):
+                target_row = max(0, target_row + direction)
+                position %= len(columns)
+            target_col = columns[position]
+            if target_col != SIZE_COL or self._size_column_available():
+                return self._focus_cell(target_row, target_col)
 
     def _move_focus(self, row, col, row_delta, col_delta):
         return self._focus_cell(row + row_delta, col + col_delta)
@@ -2895,6 +2927,10 @@ class LiveSalesApp(tk.Tk):
             return self.colors["table_bg"]
         customer = sale_customer_name(self.row_vars[row][CLIENT_COL].get())
         return self.colors["sold_row"] if customer else self.colors["table_bg"]
+
+    def _customer_value_changed(self, row):
+        self._refresh_row_style(row)
+        self._refresh_live_clients()
 
     def _duplicate_code_groups(self):
         grouped = defaultdict(list)
@@ -3286,10 +3322,22 @@ class LiveSalesApp(tk.Tk):
 
     def _refresh_totals(self):
         self._refresh_customer_counts()
+        self._refresh_live_clients()
         if not hasattr(self, "total_sold_label"):
             return
         stats = self._current_live_stats()
         self.total_sold_label.configure(text=f"Vendido: {self._format_money(stats['total'])}")
+
+    def _refresh_live_clients(self):
+        label = self.__dict__.get("live_clients_label")
+        if label is None:
+            return
+        count = len(count_customer_rows(self._rows()))
+        label.configure(text=f"{count} {'cliente' if count == 1 else 'clientes'}")
+        if self.live_running:
+            label.pack(side="left", before=self.timer_label, padx=(0, 8))
+        else:
+            label.pack_forget()
 
     def _refresh_customer_counts(self):
         labels = self.__dict__.get("customer_count_labels", [])
@@ -3942,6 +3990,8 @@ class LiveSalesApp(tk.Tk):
     def _refresh_live_controls(self):
         elapsed = self._current_elapsed_seconds()
         self.timer_label.configure(text=self._format_elapsed(elapsed))
+        self._refresh_live_clients()
+        self._refresh_table_column_order()
         self.pre_live_frame.pack_forget()
         self.live_frame.pack_forget()
         self.post_live_frame.pack_forget()
